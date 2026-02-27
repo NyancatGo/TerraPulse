@@ -1,31 +1,39 @@
 import pandas as pd
-import sqlite3
 import os
 
 class DataCleaner:
-    def __init__(self, raw_data_path: str):
+    def __init__(self, raw_data_path: str = "data/raw/earthquakes.csv"):
         self.raw_data_path = raw_data_path
     
     def process_data(self) -> pd.DataFrame:
         """
-        Keşifsel Veri Analizi (EDA) ve temizlik yapılarak veriyi döndürür.
-        Mock-up içerik.
+        USGS veya benzeri CSV deprem verisini okur ve temizler.
+        Orijinal Sütunlar: Time,Magnitude,Place,Latitude,Longitude,Depth
         """
-        print("Data processing started...")
-        # Örnek DataFrame
-        data = {
-            'Date': ['2023-01-01', '2023-01-02', '2023-01-03'],
-            'Magnitude': [4.5, 5.1, 3.8],
-            'Depth': [10.0, 5.0, 15.0],
-            'Location': ['Istanbul', 'Izmir', 'Ankara']
-        }
-        df = pd.DataFrame(data)
-        
-        # Basit temizlik işlemi örneği
-        df.dropna(inplace=True)
-        print("Data processed completely.")
-        return df
+        print(f"Veri okunuyor: {self.raw_data_path}")
+        if not os.path.exists(self.raw_data_path):
+            print("HATA: CSV dosyası bulunamadı!")
+            return pd.DataFrame()
+            
+        df = pd.DataFrame()
+        try:
+            # CSV dosyasını Pandas ile oku
+            df = pd.read_csv(self.raw_data_path)
+            
+            # Eksik (NaN) değere sahip olan bozuk satırları temizle
+            df.dropna(inplace=True)
+            
+            # Sütun isimlerini küçük harflere çevir (SQLite uyumluluğu için)
+            df.columns = [col.lower() for col in df.columns]
+            
+            print(f"Veri analizi ve temizliği tamamlandı. Toplam {len(df)} adet deprem kaydı işlendi.")
+            return df
+            
+        except Exception as e:
+            print(f"Bilinmeyen bir veri okuma hatası oluştu: {e}")
+            return df
 
 if __name__ == "__main__":
-    cleaner = DataCleaner("data/raw/")
-    print(cleaner.process_data())
+    cleaner = DataCleaner()
+    temizlenmis_df = cleaner.process_data()
+    print(temizlenmis_df.head(3))
