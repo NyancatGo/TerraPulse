@@ -2,7 +2,15 @@ import pandas as pd
 import os
 
 class DataCleaner:
-    def __init__(self, raw_data_path: str = "data/raw/earthquakes.csv"):
+    def __init__(self, raw_data_path: str = None):
+        # Proje kök dizinini bul
+        if raw_data_path is None:
+            # Bu dosyanın konumu: src/data_processing/data_cleaner.py
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            # İki seviye yukarı çık: TerraPulse/ klasörüne git
+            project_root = os.path.dirname(os.path.dirname(current_dir))
+            raw_data_path = os.path.join(project_root, "data", "raw", "earthquakes.csv")
+        
         self.raw_data_path = raw_data_path
     
     def process_data(self) -> pd.DataFrame:
