@@ -4,8 +4,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 from ui.map_view import MapView
-from visualization.map_engine import create_earthquake_map, filter_earthquakes
-from data_processing.data_cleaner import DataCleaner
+from visualization.map_engine import create_earthquake_map
+from database.db_manager import DBManager, ensure_database_exists
 import os
 
 class MainWindow(QMainWindow):
@@ -14,10 +14,13 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("TerraPulse - Sismik Veri Analizi")
         self.setGeometry(100, 100, 1024, 768)
 
-        # Veri yükleme
-        self.data_cleaner = DataCleaner()
-        self.earthquake_data = self.data_cleaner.process_data()
-        self.filtered_data = self.earthquake_data.copy()
+        # Veritabanı bağlantısını kur
+        ensure_database_exists()  # Veritabanı yoksa oluştur
+        self.db = DBManager()
+        
+        # Tarih aralığını al
+        self.min_year, self.max_year = self.db.get_date_range()
+        print(f"📅 Tarih aralığı: {self.min_year} - {self.max_year}")
         
         # Harita dosya yolu - maps/ dizinine kaydet
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -32,15 +35,7 @@ class MainWindow(QMainWindow):
         self._init_tabs()
         
         # İlk haritayı oluştur ve yükle
-        if not self.earthquake_data.empty:
-            # İlk yüklemede performans için sadece büyük depremleri göster
-            print("🗺️ İlk harita yükleniyor (Büyüklük >= 4.0 - optimize)...")
-            self.filtered_data = filter_earthquakes(self.earthquake_data, min_magnitude=4.0)
-            self.slider_mag.setValue(40)  # 4.0
-            self._update_map()
-            # Count label'ı güncelle
-            if hasattr(self, 'lbl_count'):
-                self.lbl_count.setText(f"📊 {len(self.filtered_data)} deprem")
+        self._load_initial_map()
 
     def _init_tabs(self):
         """Sekmeleri (Tab) oluştur ve ekle."""
@@ -60,43 +55,81 @@ class MainWindow(QMainWindow):
         """1. Sekme: Harita & Filtreleme arayüz bileşenleri"""
         layout = QVBoxLayout()
         
-        # Filtreleme Kontrolleri Layout'u
-        filter_layout = QHBoxLayout()
+        # === İLK SATIR: Büyüklük Filtresi ===
+        mag_filter_layout = QHBoxLayout()
         
-        # Büyüklük filtresi (Slider) - 3.0'dan başlasın performans için
+        # Büyüklük filtresi (Slider)
+        mag_filter_layout.addWidget(QLabel("📈 Min Büyüklük:"))
         self.slider_mag = QSlider(Qt.Orientation.Horizontal)
         self.slider_mag.setRange(30, 80)  # 3.0 - 8.0 (x10)
         self.slider_mag.setValue(40)  # Default 4.0
+        mag_filter_layout.addWidget(self.slider_mag)
         
-        # Slider değer etiketi
         self.lbl_mag_value = QLabel("4.0")
+        self.lbl_mag_value.setMinimumWidth(40)
         self.slider_mag.valueChanged.connect(self._update_magnitude_label)
+        mag_filter_layout.addWidget(self.lbl_mag_value)
+        
+        mag_filter_layout.addStretch()
+        layout.addLayout(mag_filter_layout)
+        
+        # === İKİNCİ SATIR: Tarih Aralığı Filtresi ===
+        year_filter_layout = QHBoxLayout()
+        
+        year_filter_layout.addWidget(QLabel("📅 Yıl Aralığı:"))
+        
+        # Başlangıç yılı
+        self.slider_start_year = QSlider(Qt.Orientation.Horizontal)
+        self.slider_start_year.setRange(self.min_year, self.max_year)
+        self.slider_start_year.setValue(self.min_year)
+        year_filter_layout.addWidget(self.slider_start_year)
+        
+        self.lbl_start_year = QLabel(str(self.min_year))
+        self.lbl_start_year.setMinimumWidth(50)
+        self.slider_start_year.valueChanged.connect(self._update_year_labels)
+        year_filter_layout.addWidget(self.lbl_start_year)
+        
+        year_filter_layout.addWidget(QLabel("-"))
+        
+        # Bitiş yılı
+        self.slider_end_year = QSlider(Qt.Orientation.Horizontal)
+        self.slider_end_year.setRange(self.min_year, self.max_year)
+        self.slider_end_year.setValue(self.max_year)
+        year_filter_layout.addWidget(self.slider_end_year)
+        
+        self.lbl_end_year = QLabel(str(self.max_year))
+        self.lbl_end_year.setMinimumWidth(50)
+        self.slider_end_year.valueChanged.connect(self._update_year_labels)
+        year_filter_layout.addWidget(self.lbl_end_year)
+        
+        year_filter_layout.addStretch()
+        layout.addLayout(year_filter_layout)
+        
+        # === ÜÇÜNCÜ SATIR: Butonlar ve Sayaç ===
+        button_layout = QHBoxLayout()
         
         # Filtreleme butonu
-        self.btn_filter = QPushButton("Filtrele")
+        self.btn_filter = QPushButton("🔍 Filtrele")
         self.btn_filter.clicked.connect(self._apply_filter)
+        self.btn_filter.setStyleSheet("font-weight: bold; padding: 8px;")
+        button_layout.addWidget(self.btn_filter)
         
         # Sıfırlama butonu
-        self.btn_reset = QPushButton("Sıfırla")
+        self.btn_reset = QPushButton("🔄 Sıfırla")
         self.btn_reset.clicked.connect(self._reset_filter)
-
-        # Layout'a ekle
-        filter_layout.addWidget(QLabel("Min Büyüklük:"))
-        filter_layout.addWidget(self.slider_mag)
-        filter_layout.addWidget(self.lbl_mag_value)
-        filter_layout.addWidget(self.btn_filter)
-        filter_layout.addWidget(self.btn_reset)
+        button_layout.addWidget(self.btn_reset)
         
-        # Performans bilgi etiketi
-        self.lbl_count = QLabel("")
-        filter_layout.addWidget(self.lbl_count)
-        filter_layout.addStretch()
-
-        # Harita widget'ı (MapView)
+        button_layout.addStretch()
+        
+        # Deprem sayacı
+        self.lbl_count = QLabel("📊 Deprem: 0")
+        self.lbl_count.setStyleSheet("font-weight: bold; font-size: 14px;")
+        button_layout.addWidget(self.lbl_count)
+        
+        layout.addLayout(button_layout)
+        
+        # === Harita widget'ı ===
         self.map_widget = MapView()
-
-        # Ana layout'a yerleştirme
-        layout.addLayout(filter_layout)
         layout.addWidget(self.map_widget, stretch=1)
         
         self.tab_map.setLayout(layout)
@@ -146,52 +179,100 @@ class MainWindow(QMainWindow):
         self.tab_risk.setLayout(layout)
     
     def _update_magnitude_label(self):
-        """Slider değerini etikette göster"""
+        """Büyüklük slider değerini etikette göster"""
         value = self.slider_mag.value() / 10.0
         self.lbl_mag_value.setText(f"{value:.1f}")
     
-    def _apply_filter(self):
-        """Filtreleme uygula ve haritayı güncelle"""
-        # Minimum büyüklük değerini al
-        min_mag = self.slider_mag.value() / 10.0
+    def _update_year_labels(self):
+        """Yıl slider değerlerini etiketlerde göster"""
+        start_year = self.slider_start_year.value()
+        end_year = self.slider_end_year.value()
         
-        # Veriyi filtrele
-        self.filtered_data = filter_earthquakes(
-            self.earthquake_data, 
-            min_magnitude=min_mag
+        # Başlangıç yılı bitiş yılından büyük olamaz
+        if start_year > end_year:
+            self.slider_start_year.setValue(end_year)
+            start_year = end_year
+        
+        self.lbl_start_year.setText(str(start_year))
+        self.lbl_end_year.setText(str(end_year))
+    
+    def _apply_filter(self):
+        """Filtreleme uygula - SQLite'tan veri çek ve haritayı güncelle"""
+        # Filtre değerlerini al
+        min_mag = self.slider_mag.value() / 10.0
+        start_year = self.slider_start_year.value()
+        end_year = self.slider_end_year.value()
+        
+        # SQLite'tan filtrelenmiş veriyi çek
+        print(f"🔍 Filtre: Mag>={min_mag:.1f}, Yıl: {start_year}-{end_year}")
+        filtered_df = self.db.fetch_earthquakes(
+            min_mag=min_mag,
+            max_mag=10.0,
+            start_year=start_year,
+            end_year=end_year
         )
         
-        print(f"🔍 Filtre uygulandı: Min Büyüklük {min_mag:.1f}")
-        print(f"📊 Toplam {len(self.filtered_data)} deprem gösteriliyor")
-        
-        # Bilgi etiketini güncelle
-        self.lbl_count.setText(f"📊 {len(self.filtered_data)} deprem")
+        # Deprem sayısını güncelle
+        self.lbl_count.setText(f"📊 Deprem: {len(filtered_df)}")
         
         # Haritayı güncelle
-        self._update_map()
+        if not filtered_df.empty:
+            self._update_map(filtered_df)
+        else:
+            print("⚠️ Filtre sonucu veri bulunamadı")
+            self.lbl_count.setText("📊 Deprem: 0")
     
     def _reset_filter(self):
-        """Filtreyi sıfırla"""
-        self.slider_mag.setValue(30)  # 3.0'a dön
-        self.filtered_data = filter_earthquakes(self.earthquake_data, min_magnitude=3.0)
-        print("🔄 Filtre sıfırlandı (3.0+)")
-        self.lbl_count.setText(f"📊 {len(self.filtered_data)} deprem")
-        self._update_map()
+        """Filtreleri sıfırla"""
+        self.slider_mag.setValue(30)  # 3.0
+        self.slider_start_year.setValue(self.min_year)
+        self.slider_end_year.setValue(self.max_year)
+        
+        print("🔄 Filtreler sıfırlandı")
+        
+        # Varsayılan filtreyi uygula
+        self._apply_filter()
     
-    def _update_map(self):
+    def _update_map(self, df):
         """Haritayı oluştur ve görüntüle"""
-        if self.filtered_data.empty:
+        if df.empty:
             print("⚠️ Gösterilecek deprem verisi yok")
             return
         
         try:
             # Harita oluştur
-            map_path = create_earthquake_map(self.filtered_data, self.map_path)
+            map_path = create_earthquake_map(df, self.map_path)
             
             # MapView'e yükle
             self.map_widget.load_map(map_path)
-            print(f"✅ Harita güncellendi: {len(self.filtered_data)} deprem gösteriliyor")
+            print(f"✅ Harita güncellendi: {len(df)} deprem gösteriliyor")
         except Exception as e:
             print(f"❌ Harita yükleme hatası: {e}")
             import traceback
             traceback.print_exc()
+    
+    def _load_initial_map(self):
+        """İlk açılışta haritayı yükle"""
+        print("🗺️ İlk harita yükleniyor (Büyüklük >= 4.0)...")
+        
+        # Varsayılan filtre: 4.0+ magnitude, tüm yıllar
+        filtered_df = self.db.fetch_earthquakes(
+            min_mag=4.0,
+            max_mag=10.0,
+            start_year=self.min_year,
+            end_year=self.max_year
+        )
+        
+        # Sayacı güncelle
+        self.lbl_count.setText(f"📊 Deprem: {len(filtered_df)}")
+        
+        # Haritayı oluştur
+        if not filtered_df.empty:
+            self._update_map(filtered_df)
+    
+    def closeEvent(self, event):
+        """Pencere kapatılırken veritabanı bağlantısını kapat"""
+        if hasattr(self, 'db'):
+            self.db.close()
+            print("✅ Veritabanı bağlantısı kapatıldı")
+        event.accept()
