@@ -1,0 +1,167 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Kuzey Anadolu Fay Hattı (KAFH)",
+        "risk": "Çok Yüksek",
+        "length_km": 1500,
+        "type": "Doğrultu Atımlı Fay",
+        "description": "Türkiye'nin en aktif fay hatlarından biri. 1939 ve 1999 depremlerinden sorumlu."
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [26.5, 40.8],
+          [27.5, 40.7],
+          [28.5, 40.8],
+          [29.5, 40.9],
+          [30.5, 41.0],
+          [31.5, 40.9],
+          [32.5, 40.8],
+          [33.5, 40.7],
+          [34.5, 40.6],
+          [35.5, 40.5],
+          [36.5, 40.4],
+          [37.5, 40.3],
+          [38.5, 40.2],
+          [39.5, 40.1],
+          [40.5, 40.0],
+          [41.5, 39.9],
+          [42.5, 39.8]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Doğu Anadolu Fay Hattı (DAFH)",
+        "risk": "Yüksek",
+        "length_km": 650,
+        "type": "Doğrultu Atımlı Fay",
+        "description": "Türkiye'nin ikinci büyük fay hattı. Elazığ ve Malatya bölgesinden geçer."
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [36.5, 37.5],
+          [37.0, 37.8],
+          [37.5, 38.1],
+          [38.0, 38.4],
+          [38.5, 38.7],
+          [39.0, 39.0],
+          [39.5, 39.2],
+          [40.0, 39.4],
+          [40.5, 39.6],
+          [41.0, 39.8],
+          [41.5, 39.9],
+          [42.0, 40.0]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Ege Graben Sistemi",
+        "risk": "Yüksek",
+        "length_km": 400,
+        "type": "Normal Fay",
+        "description": "Batı Anadolu'nun genişleme rejiminin ürünü. İzmir ve çevresinde aktif."
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [26.5, 38.5],
+          [27.0, 38.3],
+          [27.5, 38.4],
+          [28.0, 38.6],
+          [28.5, 38.8],
+          [29.0, 39.0],
+          [29.5, 39.2]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Gediz Grabeni",
+        "risk": "Orta",
+        "length_km": 200,
+        "type": "Normal Fay",
+        "description": "İzmir körfezinden başlayıp Gediz nehri boyunca uzanan fay."
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [26.8, 38.4],
+          [27.3, 38.5],
+          [27.8, 38.6],
+          [28.3, 38.7],
+          [28.8, 38.8],
+          [29.3, 38.9]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Burdur-Fethiye Fay Zonu",
+        "risk": "Orta",
+        "length_km": 300,
+        "type": "Normal Fay",
+        "description": "Göller Yöresi'nden Akdeniz'e uzanan fay sistemi."
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [29.0, 37.0],
+          [29.3, 37.3],
+          [29.6, 37.6],
+          [29.9, 37.9],
+          [30.2, 38.2],
+          [30.5, 38.5]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Ezinepazarı Fay Zonu",
+        "risk": "Orta",
+        "length_km": 150,
+        "type": "Normal Fay",
+        "description": "Kuzey Ege'de Çanakkale civarındaki fay sistemi."
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [26.2, 39.8],
+          [26.5, 40.0],
+          [26.8, 40.2],
+          [27.1, 40.4]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Tuz Gölü Fay Zonu",
+        "risk": "Düşük",
+        "length_km": 180,
+        "type": "Normal Fay",
+        "description": "Orta Anadolu'da Tuz Gölü çevresindeki fay hatları."
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [33.0, 38.5],
+          [33.3, 38.7],
+          [33.6, 38.9],
+          [33.9, 39.1],
+          [34.2, 39.3]
+        ]
+      }
+    }
+  ]
+}
