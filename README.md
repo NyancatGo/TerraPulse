@@ -53,13 +53,6 @@ Projeyi kendi bilgisayarınızda çalıştırmak için aşağıdaki adımları i
    python src/app.py
    ```
 
-## 👨‍💻 Geliştirici Ekibi
-Bu proje **BTS302.1 Görsel Programlama** dersi kapsamında aşağıdaki ekip tarafından geliştirilmektedir:
-- **Baran Atıcı**
-- **Arda Şengün**
-- **Ahmet Faruk Uysal**
-- **Emirhan Laleli**
-
 ---
 <div align="center">
   <i>"Depreme karşı en güçlü silahımız, onu anlamaktır."</i>
