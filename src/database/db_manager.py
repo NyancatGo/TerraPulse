@@ -52,7 +52,7 @@ class DBManager:
         df.to_sql(table_name, self.conn, if_exists='replace', index=False)
         print(f"Süper! Toplam {len(df)} deprem verisi başarılı bir şekilde '{table_name}' tablosuruna (terrapulse.db) yüklendi.")
 
-    def fetch_earthquakes(self, min_mag=0.0, max_mag=10.0, start_year=None, end_year=None):
+    def fetch_earthquakes(self, min_mag=0.0, max_mag=10.0, start_year=None, end_year=None, region1=None, region2=None):
         """
         Filtrelenmiş deprem verilerini SQLite'tan çeker
         
@@ -61,6 +61,8 @@ class DBManager:
             max_mag: Maximum büyüklük
             start_year: Başlangıç yılı (opsiyonel)
             end_year: Bitiş yılı (opsiyonel)
+            region1: Bölge 1 ismi (opsiyonel)
+            region2: Bölge 2 ismi (opsiyonel)
         
         Returns:
             Pandas DataFrame
@@ -72,6 +74,35 @@ class DBManager:
         if start_year and end_year:
             query += " AND strftime('%Y', time) BETWEEN ? AND ?"
             params.extend([str(start_year), str(end_year)])
+            
+        # Bölge filtresi: 'Tüm Türkiye' haricindeki bölgelerin tüm şehirlerini bul
+        REGION_CITIES = {
+            "Marmara": ["İstanbul", "Edirne", "Kırklareli", "Tekirdağ", "Çanakkale", "Kocaeli", "Yalova", "Sakarya", "Bilecik", "Bursa", "Balıkesir"],
+            "Ege": ["İzmir", "Manisa", "Aydın", "Denizli", "Muğla", "Afyonkarahisar", "Kütahya", "Uşak"],
+            "Akdeniz": ["Antalya", "Isparta", "Burdur", "Adana", "Mersin", "Osmaniye", "Hatay", "Kahramanmaraş"],
+            "İç Anadolu": ["Ankara", "Konya", "Kayseri", "Eskişehir", "Sivas", "Kırıkkale", "Aksaray", "Karaman", "Kırşehir", "Niğde", "Nevşehir", "Yozgat", "Çankırı"],
+            "Karadeniz": ["Trabzon", "Samsun", "Ordu", "Giresun", "Rize", "Artvin", "Zonguldak", "Sinop", "Bartın", "Karabük", "Kastamonu", "Çorum", "Amasya", "Tokat", "Gümüşhane", "Bayburt", "Bolu", "Düzce"],
+            "Doğu Anadolu": ["Erzurum", "Erzincan", "Kars", "Ağrı", "Ardahan", "Iğdır", "Van", "Hakkari", "Bitlis", "Muş", "Bingöl", "Tunceli", "Elazığ", "Malatya"],
+            "Güneydoğu Anadolu": ["Gaziantep", "Diyarbakır", "Şanlıurfa", "Batman", "Adıyaman", "Mardin", "Siirt", "Şırnak", "Kilis"]
+        }
+        
+        # Seçilen bölgelerdeki şehirleri tek listede topla
+        target_cities = []
+        if region1 and region1 in REGION_CITIES:
+            target_cities.extend(REGION_CITIES[region1])
+        if region2 and region2 in REGION_CITIES:
+            # Seçilen ikinci bölge birinci ile aynı değilse (veya set ile duplicate temizle)
+            if region2 != region1:
+                target_cities.extend(REGION_CITIES[region2])
+                
+        # Eğer kullanıcının seçimine yönelik şehirler bulunduysa SQL AND (.. OR ..) filtresini ekle
+        if target_cities:
+            city_conditions = ["place LIKE ?" for _ in target_cities]
+            # Tüm şehirlere özel parametreler
+            params.extend([f"%{city}%" for city in target_cities])
+            
+            # (place LIKE '%Muğla%' OR place LIKE '%İzmir%' OR ...) yapısı
+            query += " AND (" + " OR ".join(city_conditions) + ")"
         
         try:
             df = pd.read_sql_query(query, self.conn, params=params)

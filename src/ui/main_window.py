@@ -4,6 +4,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 from ui.map_view import MapView
+from ui.analysis_tab import AnalysisTab
 from visualization.map_engine import create_earthquake_map
 from database.db_manager import DBManager, ensure_database_exists
 import os
@@ -140,9 +141,14 @@ class MainWindow(QMainWindow):
         
         controls = QHBoxLayout()
         self.combo_region1 = QComboBox()
-        self.combo_region1.addItems(["Marmara", "Ege", "İç Anadolu", "Doğu Anadolu"])
+        self.combo_region1.addItems(["Tüm Türkiye", "Marmara", "Ege", "Akdeniz", "İç Anadolu", "Karadeniz", "Doğu Anadolu", "Güneydoğu Anadolu"])
         self.combo_region2 = QComboBox()
-        self.combo_region2.addItems(["Marmara", "Ege", "İç Anadolu", "Doğu Anadolu"])
+        self.combo_region2.addItems(["Tüm Türkiye", "Marmara", "Ege", "Akdeniz", "İç Anadolu", "Karadeniz", "Doğu Anadolu", "Güneydoğu Anadolu"])
+        
+        # Sinyal Bağlantıları (Seçim değiştiğinde filtrelemeyi tetikler)
+        self.combo_region1.currentIndexChanged.connect(self._apply_filter)
+        self.combo_region2.currentIndexChanged.connect(self._apply_filter)
+        # Eğer bir Karşılaştır butonu isterseniz (opsiyonel), o da tetikleyebilir:
         
         controls.addWidget(QLabel("Bölge 1:"))
         controls.addWidget(self.combo_region1)
@@ -150,15 +156,19 @@ class MainWindow(QMainWindow):
         controls.addWidget(self.combo_region2)
         
         self.btn_compare = QPushButton("Karşılaştır")
+        self.btn_compare.clicked.connect(self._apply_filter)
         controls.addWidget(self.btn_compare)
-
-        # Matplotlib grafik alanı
-        self.graph_placeholder = QLabel("Burada Matplotlib grafikleri yer alacak (Hafta 7)")
-        self.graph_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.graph_placeholder.setStyleSheet("background-color: #e0e0e0; border: 1px dashed gray;")
+                # Matplotlib grafik alanı (AnalysisTab) için güvenli container
+        self.analysis_container = QWidget()
+        container_layout = QVBoxLayout(self.analysis_container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # İçine AnalysisTab'ı yerleştir
+        self.analysis_widget = AnalysisTab()
+        container_layout.addWidget(self.analysis_widget)
 
         layout.addLayout(controls)
-        layout.addWidget(self.graph_placeholder, stretch=1)
+        layout.addWidget(self.analysis_container, stretch=1)
         self.tab_analysis.setLayout(layout)
 
     def _setup_risk_tab(self):
@@ -203,17 +213,38 @@ class MainWindow(QMainWindow):
         start_year = self.slider_start_year.value()
         end_year = self.slider_end_year.value()
         
-        # SQLite'tan filtrelenmiş veriyi çek
-        print(f"🔍 Filtre: Mag>={min_mag:.1f}, Yıl: {start_year}-{end_year}")
+        # Seçili bölgeleri al (.currentText() ile)
+        # Sınıf başlatılırken combo_region1 vb henüz yoksa (hata almamak için) try-except bloğu kullanılabilir veya hasattr sorgusu
+        region1 = getattr(self, "combo_region1", None)
+        region2 = getattr(self, "combo_region2", None)
+        
+        region1_text = region1.currentText() if region1 else "Tüm Türkiye"
+        region2_text = region2.currentText() if region2 else "Tüm Türkiye"
+        
+        # Debug Çıktısı (Kullanıcının Tıklamalarını doğrulamak için)
+        print(f"\n[DEBUG] Seçilen Bölge 1: {region1_text}, Bölge 2: {region2_text}")
+        print(f"[DEBUG] 🔍 Diğer Filtreler: Mag>={min_mag:.1f}, Yıl: {start_year}-{end_year}")
+        
+        # SQLite'tan filtrelenmiş veriyi çek (db_manager modifiye edilerek WHERE bölgesine parametre eklendi)
         filtered_df = self.db.fetch_earthquakes(
             min_mag=min_mag,
             max_mag=10.0,
             start_year=start_year,
-            end_year=end_year
+            end_year=end_year,
+            region1=region1_text,
+            region2=region2_text
         )
+        
+        # Filtre sonucunun kontrolü
+        print(f"[DEBUG] 📊 filtrelenmiş DF uzunluğu: {len(filtered_df)}")
+        if not filtered_df.empty:
+            print(f"[DEBUG] 📊 Gelen sütunlar: {filtered_df.columns.tolist()}")
         
         # Deprem sayısını güncelle
         self.lbl_count.setText(f"📊 Deprem: {len(filtered_df)}")
+        
+        # Grafikleri güncelle
+        self.analysis_widget.update_charts(filtered_df)
         
         # Haritayı güncelle
         if not filtered_df.empty:
@@ -221,6 +252,35 @@ class MainWindow(QMainWindow):
         else:
             print("⚠️ Filtre sonucu veri bulunamadı")
             self.lbl_count.setText("📊 Deprem: 0")
+            
+        # --- VERİ DOĞRULAMA ÇAĞRISI ---
+        self._validate_data(filtered_df)
+        
+    def _validate_data(self, df):
+        """Çizilen grafik verisinin ham DB verisiyle uyumunu test eder"""
+        print("\n" + "="*50)
+        print("🔍 ÇAPRAZ VERİ KONTROLÜ (DATA VALIDATION)")
+        if df is None or df.empty:
+            print("   ⚠️ Doğrulanacak veri yok (DataFrame Empty).")
+            print("="*50 + "\n")
+            return
+            
+        # Toplam satır sayısını yazdır
+        print(f"   📊 Grafiklere ve Haritaya İletilen Toplam Deprem: {len(df)}")
+        
+        # En yüksek büyüklüğe sahip ilk 3 depremi bul
+        print("   📈 Büyüklüğü (Magnitude) En Yüksek İlk 3 Deprem:")
+        try:
+            # Sütun isimleri farklıysa uyuşmazlığı engelle:
+            date_col = 'date' if 'date' in df.columns else 'time' 
+            top_3 = df.nlargest(3, 'magnitude')
+            
+            for index, row in top_3.iterrows():
+                print(f"      - Tarih: {row[date_col]} | Mag: {row['magnitude']} | Konum: {row['place']}")
+        except Exception as e:
+            print(f"   ❌ Doğrulama sırasında hata oluştu: {e}")
+            
+        print("="*50 + "\n")
     
     def _reset_filter(self):
         """Filtreleri sıfırla"""
@@ -263,8 +323,16 @@ class MainWindow(QMainWindow):
             end_year=self.max_year
         )
         
+        # İlk yükleme veri durumu kontrolü
+        print(f"[DEBUG] İlk yüklenen DF uzunluğu: {len(filtered_df)}")
+        if not filtered_df.empty:
+             print(f"[DEBUG] 📊 İlk yüklenen sütunlar: {filtered_df.columns.tolist()}")
+        
         # Sayacı güncelle
         self.lbl_count.setText(f"📊 Deprem: {len(filtered_df)}")
+        
+        # Grafikleri başlat
+        self.analysis_widget.update_charts(filtered_df)
         
         # Haritayı oluştur
         if not filtered_df.empty:
