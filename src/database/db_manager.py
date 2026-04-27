@@ -2,10 +2,46 @@ import sqlite3
 import pandas as pd
 import os
 import sys
+import math
+import hashlib
 
 # DataCleaner'ı bulabilmesi için import yollarını düzeltiyoruz
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data_processing.data_cleaner import DataCleaner
+
+
+REGION_CITIES = {
+    "Marmara": ["İstanbul", "Edirne", "Kırklareli", "Tekirdağ", "Çanakkale", "Kocaeli", "Yalova", "Sakarya", "Bilecik", "Bursa", "Balıkesir"],
+    "Ege": ["İzmir", "Manisa", "Aydın", "Denizli", "Muğla", "Afyonkarahisar", "Kütahya", "Uşak"],
+    "Akdeniz": ["Antalya", "Isparta", "Burdur", "Adana", "Mersin", "Osmaniye", "Hatay", "Kahramanmaraş"],
+    "İç Anadolu": ["Ankara", "Konya", "Kayseri", "Eskişehir", "Sivas", "Kırıkkale", "Aksaray", "Karaman", "Kırşehir", "Niğde", "Nevşehir", "Yozgat", "Çankırı"],
+    "Karadeniz": ["Trabzon", "Samsun", "Ordu", "Giresun", "Rize", "Artvin", "Zonguldak", "Sinop", "Bartın", "Karabük", "Kastamonu", "Çorum", "Amasya", "Tokat", "Gümüşhane", "Bayburt", "Bolu", "Düzce"],
+    "Doğu Anadolu": ["Erzurum", "Erzincan", "Kars", "Ağrı", "Ardahan", "Iğdır", "Van", "Hakkari", "Bitlis", "Muş", "Bingöl", "Tunceli", "Elazığ", "Malatya"],
+    "Güneydoğu Anadolu": ["Gaziantep", "Diyarbakır", "Şanlıurfa", "Batman", "Adıyaman", "Mardin", "Siirt", "Şırnak", "Kilis"]
+}
+
+DEFAULT_USERS = (
+    ("admin", "admin123", "admin"),
+    ("analist", "user123", "user"),
+)
+
+
+def _get_risk_level(probability):
+    """Poisson olasılığına göre risk sınıfı döndürür."""
+    if probability >= 0.60:
+        return "Çok Yüksek"
+    if probability >= 0.40:
+        return "Yüksek"
+    if probability >= 0.20:
+        return "Orta"
+    if probability >= 0.10:
+        return "Düşük"
+    return "Çok Düşük"
+
+
+def hash_password(password: str) -> str:
+    """Girilen parolayi SHA-256 ile ozetler."""
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 class DBManager:
     def __init__(self, db_path: str = "data/processed/terrapulse.db"):
@@ -40,6 +76,20 @@ class DBManager:
                 depth REAL
             )
         ''')
+        cursor.execute(
+            '''
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL CHECK(role IN ('admin', 'user'))
+            )
+            '''
+        )
+        cursor.executemany(
+            "INSERT OR IGNORE INTO users (username, password_hash, role) VALUES (?, ?, ?)",
+            [(username, hash_password(password), role) for username, password, role in DEFAULT_USERS],
+        )
         self.conn.commit()
 
     def load_dataframe_to_db(self, df: pd.DataFrame, table_name: str = "earthquakes"):
@@ -75,17 +125,6 @@ class DBManager:
             query += " AND strftime('%Y', time) BETWEEN ? AND ?"
             params.extend([str(start_year), str(end_year)])
             
-        # Bölge filtresi: 'Tüm Türkiye' haricindeki bölgelerin tüm şehirlerini bul
-        REGION_CITIES = {
-            "Marmara": ["İstanbul", "Edirne", "Kırklareli", "Tekirdağ", "Çanakkale", "Kocaeli", "Yalova", "Sakarya", "Bilecik", "Bursa", "Balıkesir"],
-            "Ege": ["İzmir", "Manisa", "Aydın", "Denizli", "Muğla", "Afyonkarahisar", "Kütahya", "Uşak"],
-            "Akdeniz": ["Antalya", "Isparta", "Burdur", "Adana", "Mersin", "Osmaniye", "Hatay", "Kahramanmaraş"],
-            "İç Anadolu": ["Ankara", "Konya", "Kayseri", "Eskişehir", "Sivas", "Kırıkkale", "Aksaray", "Karaman", "Kırşehir", "Niğde", "Nevşehir", "Yozgat", "Çankırı"],
-            "Karadeniz": ["Trabzon", "Samsun", "Ordu", "Giresun", "Rize", "Artvin", "Zonguldak", "Sinop", "Bartın", "Karabük", "Kastamonu", "Çorum", "Amasya", "Tokat", "Gümüşhane", "Bayburt", "Bolu", "Düzce"],
-            "Doğu Anadolu": ["Erzurum", "Erzincan", "Kars", "Ağrı", "Ardahan", "Iğdır", "Van", "Hakkari", "Bitlis", "Muş", "Bingöl", "Tunceli", "Elazığ", "Malatya"],
-            "Güneydoğu Anadolu": ["Gaziantep", "Diyarbakır", "Şanlıurfa", "Batman", "Adıyaman", "Mardin", "Siirt", "Şırnak", "Kilis"]
-        }
-        
         # Seçilen bölgelerdeki şehirleri tek listede topla
         target_cities = []
         if region1 and region1 in REGION_CITIES:
@@ -111,6 +150,71 @@ class DBManager:
         except Exception as e:
             print(f"❌ Veritabanı sorgu hatası: {e}")
             return pd.DataFrame()
+
+    def calculate_poisson_risk_scores(self, min_mag=5.0, start_year=None, end_year=None, forecast_years=1):
+        """
+        Bölgelere göre Poisson tabanlı deprem risk skorlarını hesaplar.
+
+        Args:
+            min_mag: Risk hesabına dahil edilecek minimum büyüklük
+            start_year: Analiz başlangıç yılı
+            end_year: Analiz bitiş yılı
+            forecast_years: Tahmin ufku (yıl)
+
+        Returns:
+            Bölge bazlı skor listesi
+        """
+        if forecast_years <= 0:
+            forecast_years = 1
+
+        if start_year is None or end_year is None:
+            start_year, end_year = self.get_date_range()
+
+        if start_year > end_year:
+            start_year, end_year = end_year, start_year
+
+        analysis_years = max(1, (end_year - start_year) + 1)
+        df = self.fetch_earthquakes(
+            min_mag=min_mag,
+            max_mag=10.0,
+            start_year=start_year,
+            end_year=end_year
+        )
+
+        scores = []
+        place_series = pd.Series(dtype=str)
+        if not df.empty and 'place' in df.columns:
+            place_series = df['place'].fillna('').astype(str)
+
+        for region, cities in REGION_CITIES.items():
+            if place_series.empty:
+                event_count = 0
+            else:
+                region_mask = pd.Series(False, index=place_series.index)
+                for city in cities:
+                    region_mask = region_mask | place_series.str.contains(city, case=False, regex=False)
+                event_count = int(region_mask.sum())
+
+            annual_rate = event_count / analysis_years
+            probability = 1 - math.exp(-annual_rate * forecast_years)
+            recurrence_years = (1 / annual_rate) if annual_rate > 0 else None
+
+            scores.append({
+                "region": region,
+                "event_count": event_count,
+                "analysis_years": analysis_years,
+                "annual_rate": annual_rate,
+                "forecast_years": forecast_years,
+                "probability": probability,
+                "risk_score": probability * 100,
+                "risk_level": _get_risk_level(probability),
+                "recurrence_years": recurrence_years,
+                "min_magnitude": min_mag,
+                "start_year": start_year,
+                "end_year": end_year,
+            })
+
+        return sorted(scores, key=lambda row: row["risk_score"], reverse=True)
     
     def get_date_range(self):
         """Veritabanındaki en eski ve en yeni deprem tarihlerini döndürür"""
@@ -159,6 +263,47 @@ class DBManager:
         """Bağlantıyı kapatır."""
         if self.conn:
             self.conn.close()
+
+    def authenticate_user(self, username: str, password: str):
+        """Kullanici adini ve parolayi dogrulayip rol bilgisini dondurur."""
+        normalized_username = (username or "").strip()
+        normalized_password = password or ""
+
+        if not normalized_username or not normalized_password:
+            return None
+
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT id, username, password_hash, role FROM users WHERE username = ?",
+                (normalized_username,),
+            )
+            row = cursor.fetchone()
+        except Exception as exc:
+            print(f"❌ Kullanici dogrulama hatasi: {exc}")
+            return None
+
+        if not row:
+            return None
+
+        user_id, stored_username, stored_hash, role = row
+        if stored_hash != hash_password(normalized_password):
+            return None
+
+        return {
+            "id": user_id,
+            "username": stored_username,
+            "role": role,
+        }
+
+    def get_user_count(self) -> int:
+        """users tablosundaki kayit sayisini dondurur."""
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM users")
+            return int(cursor.fetchone()[0])
+        except Exception:
+            return 0
 
 def build_database():
     """Tüm süreci başlatan yardımcı fonksiyon."""
