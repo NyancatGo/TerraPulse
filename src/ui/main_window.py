@@ -1,10 +1,14 @@
 import os
 import math
+import shutil
+
+import pandas as pd
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QBrush, QColor
 from PyQt6.QtWidgets import (
     QComboBox,
+    QDialog,
     QFileDialog,
     QGridLayout,
     QHBoxLayout,
@@ -41,6 +45,142 @@ def get_risk_color(risk_level):
         "Çok Düşük": QColor(21, 128, 61),
     }
     return color_map.get(risk_level, QColor(100, 116, 139))
+
+
+class DataManagementDialog(QDialog):
+    def __init__(self, db_manager: DBManager, parent=None):
+        super().__init__(parent)
+        self.db = db_manager
+
+        self.setWindowTitle("Veri Yonetimi Paneli")
+        self.setModal(True)
+        self.resize(980, 620)
+
+        self._build_ui()
+        self._load_preview_data()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        title = QLabel("Sismik Veri Yonetimi")
+        title.setStyleSheet("font-size: 18px; font-weight: 700; color: #e2e8f0;")
+
+        subtitle = QLabel("Veritabanindaki son 50 deprem kaydi onizlenir, yeni CSV verileri eklenir ve yedek alinabilir.")
+        subtitle.setWordWrap(True)
+        subtitle.setStyleSheet("font-size: 12px; color: #94a3b8;")
+
+        self.preview_table = QTableWidget()
+        self.preview_table.setColumnCount(6)
+        self.preview_table.setHorizontalHeaderLabels([
+            "Tarih",
+            "Bolge / Konum",
+            "Buyukluk",
+            "Derinlik",
+            "Enlem",
+            "Boylam",
+        ])
+        self.preview_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.preview_table.verticalHeader().setVisible(False)
+        self.preview_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.preview_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.preview_table.setAlternatingRowColors(True)
+        self.preview_table.setShowGrid(False)
+
+        action_row = QHBoxLayout()
+        action_row.setSpacing(10)
+
+        self.btn_upload_csv = QPushButton("📂 Yeni Sismik Veri Ekle (CSV)")
+        self.btn_upload_csv.clicked.connect(self._append_csv_data)
+
+        self.btn_backup_db = QPushButton("💾 Veritabanini Yedekle")
+        self.btn_backup_db.setProperty("variant", "secondary")
+        self.btn_backup_db.clicked.connect(self._backup_database)
+
+        action_row.addWidget(self.btn_upload_csv)
+        action_row.addWidget(self.btn_backup_db)
+        action_row.addStretch()
+
+        layout.addWidget(title)
+        layout.addWidget(subtitle)
+        layout.addWidget(self.preview_table, stretch=1)
+        layout.addLayout(action_row)
+
+    def _load_preview_data(self):
+        query = (
+            "SELECT time, place, magnitude, depth, latitude, longitude "
+            "FROM earthquakes ORDER BY datetime(time) DESC LIMIT 50"
+        )
+
+        try:
+            df = pd.read_sql_query(query, self.db.conn)
+        except Exception as exc:
+            QMessageBox.critical(self, "Veri Onizleme Hatasi", f"Kayitlar okunurken hata olustu:\n{exc}")
+            self.preview_table.setRowCount(0)
+            return
+
+        self.preview_table.setRowCount(len(df))
+        for row_index, row in df.iterrows():
+            values = [
+                str(row.get("time", "")),
+                str(row.get("place", "")),
+                f"{float(row.get('magnitude')):.1f}" if pd.notna(row.get("magnitude")) else "",
+                f"{float(row.get('depth')):.1f}" if pd.notna(row.get("depth")) else "",
+                f"{float(row.get('latitude')):.4f}" if pd.notna(row.get("latitude")) else "",
+                f"{float(row.get('longitude')):.4f}" if pd.notna(row.get("longitude")) else "",
+            ]
+            for col_index, value in enumerate(values):
+                self.preview_table.setItem(row_index, col_index, QTableWidgetItem(value))
+
+    def _append_csv_data(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "CSV Dosyasi Sec",
+            "",
+            "CSV Files (*.csv)",
+        )
+
+        if not file_path:
+            return
+
+        try:
+            df = pd.read_csv(file_path)
+            required_columns = {"time", "magnitude", "place", "latitude", "longitude", "depth"}
+            missing_columns = required_columns.difference(df.columns)
+            if missing_columns:
+                missing_str = ", ".join(sorted(missing_columns))
+                QMessageBox.warning(
+                    self,
+                    "CSV Formati Uyumsuz",
+                    f"CSV dosyasinda eksik alanlar var: {missing_str}",
+                )
+                return
+
+            df[list(required_columns)].to_sql("earthquakes", self.db.conn, if_exists="append", index=False)
+            QMessageBox.information(
+                self,
+                "Veri Yukleme Basarili",
+                f"CSV verisi basariyla veritabanina eklendi.\nEklenen kayit sayisi: {len(df)}",
+            )
+            self._load_preview_data()
+        except Exception as exc:
+            QMessageBox.critical(self, "CSV Yukleme Hatasi", f"CSV verisi eklenirken hata olustu:\n{exc}")
+
+    def _backup_database(self):
+        source_path = self.db.db_path
+        backup_dir = os.path.dirname(source_path)
+        backup_path = os.path.join(backup_dir, "backup_terrapulse.db")
+
+        try:
+            shutil.copy(source_path, backup_path)
+            QMessageBox.information(
+                self,
+                "Yedekleme Basarili",
+                f"Veritabani yedegi olusturuldu:\n{backup_path}",
+            )
+        except Exception as exc:
+            QMessageBox.critical(self, "Yedekleme Hatasi", f"Veritabani yedeklenirken hata olustu:\n{exc}")
 
 
 class MainWindow(QMainWindow):
@@ -120,6 +260,7 @@ class MainWindow(QMainWindow):
         self.btn_data_admin.setProperty("variant", "secondary")
         self.btn_data_admin.setVisible(self.current_user.get("role") == "admin")
         self.btn_data_admin.setToolTip("Bu alan admin kullanicilar icin ayrilmistir.")
+        self.btn_data_admin.clicked.connect(self._open_data_management)
 
         chip_row.addWidget(TagChip("Dark mode", "info"))
         chip_row.addWidget(TagChip(f"{self.min_year}-{self.max_year}", "neutral"))
@@ -650,6 +791,14 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Rapor Hazir", f"PDF raporu basariyla kaydedildi.\n\n{saved_path}")
         except Exception as exc:
             QMessageBox.critical(self, "Rapor Hatasi", f"PDF raporu olusturulurken hata olustu:\n{exc}")
+
+    def _open_data_management(self):
+        if self.current_user.get("role") != "admin":
+            QMessageBox.warning(self, "Yetkisiz Islem", "Bu alana sadece admin kullanicilar erisebilir.")
+            return
+
+        dialog = DataManagementDialog(self.db, self)
+        dialog.exec()
 
     def _build_report_summary_stats(self):
         df = self.current_filtered_df.copy()

@@ -1,10 +1,14 @@
+import os
+
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -18,10 +22,17 @@ class LoginDialog(QDialog):
         super().__init__(parent)
         self.db = DBManager()
         self.authenticated_user = None
+        self._login_in_progress = False
+        self._password_visible = False
+
+        icons_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icons")
+        self.eye_icon = QIcon(os.path.join(icons_dir, "eye.svg"))
+        self.eye_off_icon = QIcon(os.path.join(icons_dir, "eye_off.svg"))
 
         self.setWindowTitle("TerraPulse Kurumsal Giriş")
         self.setModal(True)
-        self.setFixedSize(480, 540)
+        self.setMinimumSize(480, 560)
+        self.resize(500, 580)
 
         self._build_ui()
         self._apply_styles()
@@ -57,11 +68,13 @@ class LoginDialog(QDialog):
         subtitle_label.setObjectName("LoginSubtitle")
         subtitle_label.setWordWrap(True)
         subtitle_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        subtitle_label.setFixedHeight(52)
 
         self.status_label = QLabel("")
         self.status_label.setObjectName("StatusLabel")
         self.status_label.setVisible(False)
         self.status_label.setWordWrap(True)
+        self.status_label.setFixedHeight(0)
 
         form_wrap = QWidget()
         form_layout = QVBoxLayout(form_wrap)
@@ -75,16 +88,24 @@ class LoginDialog(QDialog):
         self.password_input = QLineEdit()
         self.password_input.setPlaceholderText("Şifre")
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.password_toggle_action = self.password_input.addAction(
+            self.eye_icon,
+            QLineEdit.ActionPosition.TrailingPosition,
+        )
+        self.password_toggle_action.triggered.connect(self._toggle_password_visibility)
 
         form_layout.addWidget(self._build_field("Kullanıcı Adı", self.username_input))
         form_layout.addWidget(self._build_field("Şifre", self.password_input))
 
         self.btn_login = QPushButton("Giriş Yap")
         self.btn_login.setObjectName("PrimaryButton")
+        self.btn_login.setDefault(True)
+        self.btn_login.setAutoDefault(True)
         self.btn_login.clicked.connect(self._attempt_login)
 
         self.btn_cancel = QPushButton("Vazgeç")
         self.btn_cancel.setObjectName("GhostButton")
+        self.btn_cancel.setAutoDefault(False)
         self.btn_cancel.clicked.connect(self.reject)
 
         button_row = QHBoxLayout()
@@ -97,12 +118,12 @@ class LoginDialog(QDialog):
         )
         helper_label.setObjectName("HelperText")
         helper_label.setWordWrap(True)
+        helper_label.setFixedHeight(42)
 
         card_layout.addLayout(badge_row)
         card_layout.addWidget(title_label)
         card_layout.addWidget(subtitle_label)
         card_layout.addSpacing(6)
-        card_layout.addWidget(self.status_label)
         card_layout.addWidget(form_wrap)
         card_layout.addSpacing(4)
         card_layout.addLayout(button_row)
@@ -110,11 +131,9 @@ class LoginDialog(QDialog):
 
         root_layout.addWidget(card)
 
-        self.username_input.returnPressed.connect(self._attempt_login)
-        self.password_input.returnPressed.connect(self._attempt_login)
         self.username_input.setFocus()
 
-    def _build_field(self, label_text: str, field: QLineEdit):
+    def _build_field(self, label_text: str, field: QWidget):
         wrapper = QWidget()
         layout = QVBoxLayout(wrapper)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -216,32 +235,53 @@ class LoginDialog(QDialog):
         )
 
     def _attempt_login(self):
+        if self._login_in_progress:
+            return
+
+        self._login_in_progress = True
         username = self.username_input.text().strip()
         password = self.password_input.text()
 
-        if not username or not password:
-            self._set_status("Lütfen kullanıcı adı ve şifre alanlarını doldurun.")
-            return
+        try:
+            if not username or not password:
+                QMessageBox.warning(self, "Eksik Bilgi", "Lutfen kullanici adi ve sifre alanlarini doldurun.")
+                return
 
-        if self.db.get_user_count() == 0:
-            self._set_status(
-                "users tablosunda kayıt bulunamadı. Önce varsayılan kullanıcı SQL scriptini çalıştırın."
-            )
-            return
+            if self.db.get_user_count() == 0:
+                QMessageBox.warning(
+                    self,
+                    "Kullanici Bulunamadi",
+                    "users tablosunda kayit bulunamadi. Once varsayilan kullanici SQL scriptini calistirin.",
+                )
+                return
 
-        user = self.db.authenticate_user(username, password)
-        if not user:
-            self.password_input.clear()
-            self.password_input.setFocus()
-            self._set_status("Kullanıcı adı veya şifre hatalı. Lütfen tekrar deneyin.")
-            return
+            user = self.db.authenticate_user(username, password)
+            if not user:
+                QMessageBox.warning(self, "Giris Hatasi", "Gecersiz kullanici adi veya sifre!")
+                self.password_input.clear()
+                self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
+                self._password_visible = False
+                self.password_toggle_action.setIcon(self.eye_icon)
+                self.password_input.setFocus()
+                return
 
-        self.authenticated_user = user
-        self.accept()
+            self.authenticated_user = user
+            self.accept()
+        finally:
+            self._login_in_progress = False
 
     def _set_status(self, message: str):
         self.status_label.setText(message)
         self.status_label.setVisible(True)
+
+    def _toggle_password_visibility(self):
+        self._password_visible = not self._password_visible
+        if self._password_visible:
+            self.password_input.setEchoMode(QLineEdit.EchoMode.Normal)
+            self.password_toggle_action.setIcon(self.eye_off_icon)
+        else:
+            self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
+            self.password_toggle_action.setIcon(self.eye_icon)
 
     def done(self, result: int):
         if hasattr(self, "db") and self.db:
