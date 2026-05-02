@@ -8,11 +8,190 @@ import os
 
 import folium
 import pandas as pd
-from folium.plugins import FastMarkerCluster, HeatMap
+from folium.map import Layer
+from folium.plugins import HeatMap
+from jinja2 import Template
 
 
-MAX_DETAIL_MARKERS = 260
-MAX_HEAT_POINTS = 1200
+MAX_DETAIL_MARKERS = 120
+MAX_HEAT_POINTS = 900
+
+
+class CanvasEarthquakeLayer(Layer):
+    """
+    Cok sayida deprem noktasini marker objesi uretmeden gercek Leaflet haritasi uzerine cizer.
+    """
+
+    _template = Template(
+        """
+        {% macro script(this, kwargs) %}
+            var {{ this.get_name() }} = (function() {
+                var data = {{ this.data|tojson }};
+                var options = {{ this.options|tojson }};
+
+                function depthColor(depth) {
+                    if (depth === null || depth === undefined || Number.isNaN(depth)) return "#808080";
+                    if (depth < 10) return "#FF0000";
+                    if (depth < 30) return "#FF6600";
+                    if (depth < 70) return "#FFB300";
+                    if (depth < 150) return "#FFFF00";
+                    if (depth < 300) return "#90EE90";
+                    return "#006400";
+                }
+
+                function pointRadius(magnitude, zoom) {
+                    var radius = magnitude >= 7 ? 5.8 : magnitude >= 6 ? 5.0 : magnitude >= 5 ? 4.0 : 2.7;
+                    if (zoom <= 5) return Math.max(1.6, radius - 0.8);
+                    if (zoom >= 8) return radius + 0.8;
+                    return radius;
+                }
+
+                function escapeHtml(value) {
+                    return String(value === null || value === undefined ? "" : value)
+                        .replace(/&/g, "&amp;")
+                        .replace(/</g, "&lt;")
+                        .replace(/>/g, "&gt;")
+                        .replace(/"/g, "&quot;")
+                        .replace(/'/g, "&#039;");
+                }
+
+                function popupHtml(row) {
+                    var depth = row[3] === null || row[3] === undefined ? "N/A" : Number(row[3]).toFixed(1);
+                    var time = escapeHtml(row[5] || "").slice(0, 19);
+                    return [
+                        '<div style="font-family: Arial, sans-serif; width: 215px; font-size: 12px;">',
+                        '<div style="font-weight: 700; font-size: 14px; margin-bottom: 6px;">Deprem Bilgisi</div>',
+                        '<div><b>Buyukluk:</b> ' + escapeHtml(Number(row[2] || 0).toFixed(1)) + '</div>',
+                        '<div><b>Konum:</b> ' + escapeHtml(row[4] || "Bilinmiyor") + '</div>',
+                        '<div><b>Derinlik:</b> ' + escapeHtml(depth) + ' km</div>',
+                        '<div><b>Tarih:</b> ' + time + '</div>',
+                        '<div><b>Koordinat:</b> ' + Number(row[0]).toFixed(3) + ', ' + Number(row[1]).toFixed(3) + '</div>',
+                        '</div>'
+                    ].join('');
+                }
+
+                var CanvasLayer = L.Layer.extend({
+                    initialize: function(points, layerOptions) {
+                        this.points = points || [];
+                        L.setOptions(this, layerOptions || {});
+                    },
+                    onAdd: function(map) {
+                        this._map = map;
+                        this._canvas = L.DomUtil.create("canvas", "terrapulse-earthquake-canvas leaflet-zoom-animated");
+                        this._canvas.style.pointerEvents = "none";
+                        this._ctx = this._canvas.getContext("2d", { alpha: true });
+                        map.getPane(this.options.pane || "overlayPane").appendChild(this._canvas);
+
+                        map.on("moveend zoomend resize viewreset", this._reset, this);
+                        map.on("click", this._handleClick, this);
+                        if (map.options.zoomAnimation && L.Browser.any3d) {
+                            map.on("zoomanim", this._animateZoom, this);
+                        }
+
+                        this._reset();
+                    },
+                    onRemove: function(map) {
+                        map.off("moveend zoomend resize viewreset", this._reset, this);
+                        map.off("click", this._handleClick, this);
+                        map.off("zoomanim", this._animateZoom, this);
+                        L.DomUtil.remove(this._canvas);
+                        this._canvas = null;
+                        this._ctx = null;
+                    },
+                    _animateZoom: function(event) {
+                        var scale = this._map.getZoomScale(event.zoom);
+                        var offset = this._map._latLngBoundsToNewLayerBounds(this._map.getBounds(), event.zoom, event.center).min;
+                        L.DomUtil.setTransform(this._canvas, offset, scale);
+                    },
+                    _reset: function() {
+                        if (!this._map || !this._canvas) return;
+                        var size = this._map.getSize();
+                        var topLeft = this._map.containerPointToLayerPoint([0, 0]);
+                        L.DomUtil.setPosition(this._canvas, topLeft);
+                        this._canvas.width = size.x;
+                        this._canvas.height = size.y;
+                        this._draw(topLeft);
+                    },
+                    _draw: function(topLeft) {
+                        var ctx = this._ctx;
+                        var map = this._map;
+                        if (!ctx || !map) return;
+
+                        var bounds = map.getBounds().pad(0.08);
+                        var zoom = map.getZoom();
+                        ctx.clearRect(0, 0, this._canvas.width, this._canvas.height);
+
+                        for (var i = 0; i < this.points.length; i++) {
+                            var row = this.points[i];
+                            var lat = row[0];
+                            var lon = row[1];
+                            if (!bounds.contains([lat, lon])) continue;
+
+                            var magnitude = row[2] || 0;
+                            var depth = row[3];
+                            var point = map.latLngToLayerPoint([lat, lon]).subtract(topLeft);
+                            var radius = pointRadius(magnitude, zoom);
+
+                            ctx.beginPath();
+                            ctx.arc(point.x, point.y, radius, 0, Math.PI * 2, false);
+                            ctx.fillStyle = depthColor(depth);
+                            ctx.globalAlpha = magnitude >= 5 ? 0.84 : 0.58;
+                            ctx.fill();
+                            ctx.globalAlpha = 0.72;
+                            ctx.strokeStyle = "#0f172a";
+                            ctx.lineWidth = 0.7;
+                            ctx.stroke();
+                        }
+
+                        ctx.globalAlpha = 1;
+                    },
+                    _nearestPoint: function(layerPoint) {
+                        var map = this._map;
+                        var bounds = map.getBounds().pad(0.08);
+                        var zoom = map.getZoom();
+                        var nearest = null;
+                        var nearestDistance = Infinity;
+
+                        for (var i = 0; i < this.points.length; i++) {
+                            var row = this.points[i];
+                            var lat = row[0];
+                            var lon = row[1];
+                            if (!bounds.contains([lat, lon])) continue;
+
+                            var point = map.latLngToLayerPoint([lat, lon]);
+                            var distance = point.distanceTo(layerPoint);
+                            var hitRadius = Math.max(8, pointRadius(row[2] || 0, zoom) + 4);
+
+                            if (distance <= hitRadius && distance < nearestDistance) {
+                                nearest = row;
+                                nearestDistance = distance;
+                            }
+                        }
+
+                        return nearest;
+                    },
+                    _handleClick: function(event) {
+                        var row = this._nearestPoint(event.layerPoint);
+                        if (!row) return;
+
+                        L.popup({ maxWidth: 260 })
+                            .setLatLng([row[0], row[1]])
+                            .setContent(popupHtml(row))
+                            .openOn(this._map);
+                    }
+                });
+
+                return new CanvasLayer(data, options);
+            })();
+        {% endmacro %}
+        """
+    )
+
+    def __init__(self, data, name=None, overlay=True, control=True, show=True):
+        super().__init__(name=name, overlay=overlay, control=control, show=show)
+        self._name = "CanvasEarthquakeLayer"
+        self.data = data
+        self.options = {"pane": "overlayPane"}
 
 
 def create_base_map(center=[39.0, 35.0], zoom=6):
@@ -28,6 +207,21 @@ def create_base_map(center=[39.0, 35.0], zoom=6):
         control_scale=True,
     )
     return turkey_map
+
+
+def add_interaction_styles(map_obj):
+    """Canvas katmanlarinin pan/zoom mouse olaylarini engellemesini onle."""
+    interaction_css = """
+    <style>
+        .leaflet-overlay-pane canvas {
+            pointer-events: none !important;
+        }
+        .terrapulse-earthquake-canvas {
+            pointer-events: none !important;
+        }
+    </style>
+    """
+    map_obj.get_root().header.add_child(folium.Element(interaction_css))
 
 
 def get_color_by_depth(depth):
@@ -75,6 +269,38 @@ def _prepare_marker_subset(df: pd.DataFrame, max_markers: int = MAX_DETAIL_MARKE
     return ranked.head(max_markers)
 
 
+def _prepare_canvas_points(df: pd.DataFrame) -> list[list[float]]:
+    """Canvas katmani icin temiz koordinat verisi hazirla."""
+    points = []
+
+    for row in df.itertuples(index=False):
+        latitude = getattr(row, "latitude", None)
+        longitude = getattr(row, "longitude", None)
+
+        if pd.isna(latitude) or pd.isna(longitude):
+            continue
+
+        latitude = float(latitude)
+        longitude = float(longitude)
+        if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+            continue
+
+        magnitude = getattr(row, "magnitude", 0.0)
+        depth = getattr(row, "depth", None)
+        place = getattr(row, "place", "Bilinmiyor")
+        time_value = getattr(row, "time", "")
+        points.append([
+            latitude,
+            longitude,
+            0.0 if pd.isna(magnitude) else float(magnitude),
+            None if pd.isna(depth) else float(depth),
+            "" if pd.isna(place) else str(place),
+            "" if pd.isna(time_value) else str(time_value),
+        ])
+
+    return points
+
+
 def _popup_html(row) -> str:
     """Daha hafif popup html uret."""
     time_value = getattr(row, "time", "N/A")
@@ -101,35 +327,14 @@ def add_earthquake_markers(map_obj, df, use_clustering=True):
     """
     Deprem markerlarini haritaya ekler.
     """
-    cluster_points = [
-        [row.latitude, row.longitude, float(getattr(row, "magnitude", 0.0))]
-        for row in df.itertuples(index=False)
-    ]
-
-    cluster_callback = """
-    function (row) {
-        const magnitude = row[2];
-        const radius = magnitude >= 7 ? 7 : magnitude >= 6 ? 6 : magnitude >= 5 ? 5 : 4;
-        const color = magnitude >= 6 ? '#ef4444' : magnitude >= 5 ? '#f59e0b' : '#38bdf8';
-        return L.circleMarker(new L.LatLng(row[0], row[1]), {
-            radius: radius,
-            color: '#0f172a',
-            weight: 1,
-            fillColor: color,
-            fillOpacity: 0.62
-        });
-    }
-    """
-
-    fast_cluster = FastMarkerCluster(
-        data=cluster_points,
+    canvas_points = _prepare_canvas_points(df)
+    CanvasEarthquakeLayer(
+        data=canvas_points,
         name="Deprem Noktalari",
         overlay=True,
         control=True,
         show=True,
-        callback=cluster_callback,
-    )
-    fast_cluster.add_to(map_obj)
+    ).add_to(map_obj)
 
     detail_group = folium.FeatureGroup(name="Detayli Buyuk Depremler", show=True)
     detail_df = _prepare_marker_subset(df, max_markers=MAX_DETAIL_MARKERS)
@@ -159,7 +364,7 @@ def add_earthquake_markers(map_obj, df, use_clustering=True):
     detail_group.add_to(map_obj)
 
     if len(df) > len(detail_df):
-        print(f"⚡ Performans: {len(df)} kaydin tumu hizli cluster ile, en buyuk {len(detail_df)} deprem detayli marker ile gosteriliyor")
+        print(f"⚡ Performans: {len(canvas_points)} kayit hafif canvas katmaninda, en buyuk {len(detail_df)} deprem detayli popup ile gosteriliyor")
 
 
 def add_heatmap(map_obj, df, name="Yogunluk Haritasi", max_points=MAX_HEAT_POINTS):
@@ -276,7 +481,7 @@ def add_legend(map_obj):
             <span style="margin-left: 12px;"><span style="color: #FFFF00;">⬤</span> 70-150 ·
             <span style="color: #006400;">⬤</span> &gt;300km</span>
         </p>
-        <p style="margin: 4px 0 0 0; color: #475569; font-size: 8px;">Tum kayitlar hizli kumeleme ile, en buyuk depremler detayli popup ile gosterilir.</p>
+        <p style="margin: 4px 0 0 0; color: #475569; font-size: 8px;">Tum kayitlar hafif canvas katmaninda, en buyuk depremler detayli popup ile gosterilir.</p>
     </div>
     """
     map_obj.get_root().html.add_child(folium.Element(legend_html))
@@ -287,12 +492,14 @@ def create_earthquake_map(df, output_path="map.html"):
     Deprem haritasi olusturur ve kaydeder.
     """
     earthquake_map = create_base_map()
+    add_interaction_styles(earthquake_map)
 
     if not df.empty:
         add_earthquake_markers(earthquake_map, df, use_clustering=True)
         add_heatmap(earthquake_map, df)
-        add_fault_lines(earthquake_map)
-        add_legend(earthquake_map)
+
+    add_fault_lines(earthquake_map)
+    add_legend(earthquake_map)
 
     folium.LayerControl(
         position="topright",

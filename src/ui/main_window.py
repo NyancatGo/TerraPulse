@@ -201,6 +201,9 @@ class MainWindow(QMainWindow):
         maps_dir = os.path.join(project_root, "maps")
         os.makedirs(maps_dir, exist_ok=True)
         self.map_path = os.path.join(maps_dir, "earthquake_map.html")
+        self.map_runtime_dir = os.path.join(maps_dir, "runtime")
+        os.makedirs(self.map_runtime_dir, exist_ok=True)
+        self._map_render_index = 0
 
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
@@ -381,6 +384,7 @@ class MainWindow(QMainWindow):
 
         map_card = SurfaceCard(padding=0, spacing=0)
         map_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        map_card.setGraphicsEffect(None)
 
         map_header = QWidget()
         map_header_layout = QHBoxLayout(map_header)
@@ -624,9 +628,8 @@ class MainWindow(QMainWindow):
         self._set_quake_count(len(filtered_df))
         self.analysis_widget.update_charts(filtered_df)
 
-        if not filtered_df.empty:
-            self._update_map(filtered_df)
-        else:
+        self._update_map(filtered_df)
+        if filtered_df.empty:
             print("⚠️ Filtre sonucu veri bulunamadı")
             self._set_quake_count(0)
 
@@ -716,19 +719,32 @@ class MainWindow(QMainWindow):
         self._apply_filter()
 
     def _update_map(self, df):
-        if df.empty:
-            print("⚠️ Gösterilecek deprem verisi yok")
-            return
-
         try:
-            map_path = create_earthquake_map(df, self.map_path)
+            self._map_render_index += 1
+            map_filename = f"earthquake_map_{self._map_render_index:04d}_{len(df)}.html"
+            map_output_path = os.path.join(self.map_runtime_dir, map_filename)
+            map_path = create_earthquake_map(df, map_output_path)
             self.map_widget.load_map(map_path)
+            self._cleanup_old_runtime_maps()
             print(f"✅ Harita güncellendi: {len(df)} deprem gösteriliyor")
         except Exception as e:
             print(f"❌ Harita yükleme hatası: {e}")
             import traceback
 
             traceback.print_exc()
+
+    def _cleanup_old_runtime_maps(self, keep: int = 8):
+        try:
+            runtime_maps = [
+                os.path.join(self.map_runtime_dir, name)
+                for name in os.listdir(self.map_runtime_dir)
+                if name.startswith("earthquake_map_") and name.endswith(".html")
+            ]
+            runtime_maps.sort(key=os.path.getmtime, reverse=True)
+            for old_path in runtime_maps[keep:]:
+                os.remove(old_path)
+        except OSError as exc:
+            print(f"⚠️ Eski harita dosyalari temizlenemedi: {exc}")
 
     def _load_initial_map(self):
         print("🗺️ İlk harita yükleniyor (Büyüklük >= 4.0)...")
