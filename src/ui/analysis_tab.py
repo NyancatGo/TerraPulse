@@ -116,86 +116,98 @@ class AnalysisTab(QWidget):
         )
         ax.set_title(title, loc="left", pad=10, fontsize=12, fontweight="bold", color="#f8fbff")
 
-    def update_charts(self, filtered_df: pd.DataFrame):
+    def update_charts(
+        self,
+        df1: pd.DataFrame,
+        df2: pd.DataFrame = None,
+        label1: str = "Bölge 1",
+        label2: str = "Bölge 2",
+    ):
         self.ax_time.clear()
         self.ax_hist.clear()
         self.ax_scatter.clear()
 
-        if filtered_df is None or filtered_df.empty:
-            print("❌ Graph Warning: filtered_df boş veya None geldi.")
+        COLOR1 = "#60a5fa"
+        COLOR2 = "#f59e0b"
+
+        if df1 is None:
+            df1 = pd.DataFrame()
+        if df2 is None:
+            df2 = pd.DataFrame()
+
+        def _prepare(df):
+            if df.empty:
+                return df
+            df = df.copy()
+            if "time" in df.columns and "date" not in df.columns:
+                df = df.rename(columns={"time": "date"})
+            if "date" in df.columns and not pd.api.types.is_datetime64_any_dtype(df["date"]):
+                df["date"] = pd.to_datetime(df["date"])
+            return df
+
+        df1 = _prepare(df1)
+        df2 = _prepare(df2)
+
+        if df1.empty and df2.empty:
+            print("❌ Graph Warning: her iki DataFrame de boş.")
             self._draw_empty_state(self.ax_time, "Zamana Gore Sismik Aktivite")
             self._draw_empty_state(self.ax_hist, "Buyukluk Frekansi")
             self._draw_empty_state(self.ax_scatter, "Derinlik - Buyukluk Iliskisi")
         else:
             try:
-                df = filtered_df.copy()
-                print(f"✅ Gelen Veri Sütunları: {df.columns.tolist()}")
-
-                if "time" in df.columns and "date" not in df.columns:
-                    df = df.rename(columns={"time": "date"})
-                    print("🔄 Sütun eşleştirildi: 'time' -> 'date'")
-
-                if "date" in df.columns and "magnitude" in df.columns:
-                    if not pd.api.types.is_datetime64_any_dtype(df["date"]):
-                        df["date"] = pd.to_datetime(df["date"])
-
-                    df_sorted = df.sort_values("date")
-                    self.ax_time.plot(
-                        df_sorted["date"],
-                        df_sorted["magnitude"],
-                        color="#60a5fa",
-                        marker="o",
-                        markersize=3.1,
-                        linewidth=1.8,
-                        markerfacecolor="#0d1729",
-                        markeredgewidth=0.9,
-                        alpha=0.95,
-                    )
+                # --- Zaman Serisi ---
+                time_drawn = False
+                for df, color, label in [(df1, COLOR1, label1), (df2, COLOR2, label2)]:
+                    if not df.empty and "date" in df.columns and "magnitude" in df.columns:
+                        ds = df.sort_values("date")
+                        self.ax_time.scatter(
+                            ds["date"], ds["magnitude"],
+                            color=color, s=8, alpha=0.60, label=label, linewidths=0,
+                        )
+                        time_drawn = True
+                if time_drawn:
                     self.ax_time.margins(x=0.02)
                     self.apply_axes_styling(self.ax_time, "Zamana Gore Sismik Aktivite", "Tarih", "Buyukluk (Mw)")
+                    self.ax_time.legend(frameon=False, labelcolor="#b5c7dd", fontsize=8.5, loc="upper left")
                 else:
-                    print("⚠️ Eksik Sütun: Zaman serisi (date, magnitude) çizilemedi.")
                     self._draw_empty_state(self.ax_time, "Zamana Gore Sismik Aktivite")
 
-                if "magnitude" in df.columns:
-                    self.ax_hist.hist(
-                        df["magnitude"],
-                        bins=20,
-                        color="#f59e0b",
-                        edgecolor="#3a2a10",
-                        linewidth=0.9,
-                        alpha=0.95,
-                    )
+                # --- Büyüklük Histogramı ---
+                hist_drawn = False
+                for df, color, label in [(df1, COLOR1, label1), (df2, COLOR2, label2)]:
+                    if not df.empty and "magnitude" in df.columns:
+                        self.ax_hist.hist(
+                            df["magnitude"], bins=20, color=color,
+                            edgecolor="none", alpha=0.65, label=label,
+                        )
+                        hist_drawn = True
+                if hist_drawn:
                     self.apply_axes_styling(self.ax_hist, "Buyukluk Frekansi", "Buyukluk (Mw)", "Deprem Sayisi")
+                    self.ax_hist.legend(frameon=False, labelcolor="#b5c7dd", fontsize=8.5, loc="upper right")
                 else:
-                    print("⚠️ Eksik Sütun: Histogram (magnitude) çizilemedi.")
                     self._draw_empty_state(self.ax_hist, "Buyukluk Frekansi")
 
-                if "magnitude" in df.columns and "depth" in df.columns:
-                    self.ax_scatter.scatter(
-                        df["magnitude"],
-                        df["depth"],
-                        alpha=0.78,
-                        c=df["magnitude"],
-                        cmap="viridis",
-                        s=28,
-                        edgecolors="none",
-                    )
+                # --- Derinlik–Büyüklük Dağılımı ---
+                scatter_drawn = False
+                for df, color, label in [(df1, COLOR1, label1), (df2, COLOR2, label2)]:
+                    if not df.empty and "magnitude" in df.columns and "depth" in df.columns:
+                        self.ax_scatter.scatter(
+                            df["magnitude"], df["depth"],
+                            color=color, alpha=0.50, s=22, edgecolors="none", label=label,
+                        )
+                        scatter_drawn = True
+                if scatter_drawn:
                     self.ax_scatter.invert_yaxis()
                     self.apply_axes_styling(
-                        self.ax_scatter,
-                        "Derinlik - Buyukluk Iliskisi",
-                        "Buyukluk (Mw)",
-                        "Derinlik (km)",
+                        self.ax_scatter, "Derinlik - Buyukluk Iliskisi", "Buyukluk (Mw)", "Derinlik (km)",
                     )
+                    self.ax_scatter.legend(frameon=False, labelcolor="#b5c7dd", fontsize=8.5, loc="lower right")
                 else:
-                    print("⚠️ Eksik Sütun: Scatter Plot (magnitude, depth) çizilemedi.")
                     self._draw_empty_state(self.ax_scatter, "Derinlik - Buyukluk Iliskisi")
 
             except Exception as e:
                 print(f"❌ Matplotlib Çizim Hatası: {e}")
                 import traceback
-
                 traceback.print_exc()
 
         self.fig_time.tight_layout(pad=1.2)
@@ -227,7 +239,14 @@ if __name__ == "__main__":
     window.resize(980, 720)
     window.setWindowTitle("TerraPulse - Karsilastirmali Analiz Testi")
     window.setStyleSheet("background-color: #08111f;")
-    window.update_charts(dummy_df)
+    dummy_df2 = pd.DataFrame(
+        {
+            "date": pd.date_range(start="2023-06-01", periods=60, freq="D"),
+            "magnitude": np.random.normal(loc=4.0, scale=0.8, size=60),
+            "depth": np.random.uniform(10.0, 50.0, size=60),
+        }
+    )
+    window.update_charts(dummy_df, dummy_df2, "Test Bölge 1", "Test Bölge 2")
     window.show()
 
     sys.exit(app.exec())

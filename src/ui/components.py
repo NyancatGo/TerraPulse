@@ -445,22 +445,16 @@ class SurfaceCard(QFrame):
         _apply_shadow(self)
 
 
-def _risk_palette(score: float) -> tuple[str, str, str]:
-    """Skora gore vurgu, yumusak arka plan ve koyu metin rengi."""
-    if score <= 33:
-        return ("#22c55e", "#10291d", "#74d99f")
-    if score <= 66:
-        return ("#f59e0b", "#32220d", "#ffce73")
-    return ("#ef4444", "#321217", "#ff8c97")
-
-
-def _risk_label(score: float) -> str:
-    """Sayisal skoru kolay okunur risk etiketine cevir."""
-    if score <= 33:
-        return "Dusuk Risk"
-    if score <= 66:
-        return "Orta Risk"
-    return "Yuksek Risk"
+def _get_risk_theme(risk_level: str) -> tuple[str, str, str, str]:
+    """Risk seviyesi etiketine gore (ana_renk, yumusak_arka_plan, metin_rengi, chip_tonu) dondurur."""
+    _THEMES: dict[str, tuple[str, str, str, str]] = {
+        "Çok Yüksek": ("#ef4444", "#321217", "#ff8c97", "danger"),
+        "Yüksek":     ("#f97316", "#2c180a", "#fba877", "warning"),
+        "Orta":       ("#f59e0b", "#32220d", "#ffce73", "warning"),
+        "Düşük":      ("#84cc16", "#1a2e10", "#a8e066", "success"),
+        "Çok Düşük":  ("#22c55e", "#10291d", "#74d99f", "success"),
+    }
+    return _THEMES.get(risk_level, ("#64748b", "#132239", "#94a3b8", "neutral"))
 
 
 class RiskIndicatorWidget(SurfaceCard):
@@ -611,28 +605,31 @@ class RiskIndicatorWidget(SurfaceCard):
 
     def set_no_data_state(self):
         """Paneli notr baslangic gorunumune al."""
-        self._apply_theme(0)
+        self._apply_theme("")
         self.score_label.setText("--")
         self.status_badge.setText("Hazir")
         self.risk_description.setText("Risk skoru hesaplandiginda burada donem ve bolge ozeti gorunur.")
         self.progress.setValue(0)
         self.info_probability.value_label.setText("--")
         self.info_recurrence.value_label.setText("--")
+        self.info_region.title_label.setText("En Riskli Bolge")
         self.info_region.value_label.setText("--")
 
     def set_risk_data(self, score_data: dict):
         """Hesaplanan risk verisini gorsel ozet paneline yansit."""
         score = float(score_data.get("risk_score", 0.0))
+        risk_level = score_data.get("risk_level", "Çok Düşük")
         region = score_data.get("region", "Bilinmiyor")
         probability = float(score_data.get("probability", 0.0))
         recurrence_years = score_data.get("recurrence_years")
         event_count = score_data.get("event_count", 0)
         analysis_years = score_data.get("analysis_years", 0)
         forecast_years = score_data.get("forecast_years", 1)
+        focus_label = score_data.get("focus_label", "En Riskli Bolge")
 
-        self._apply_theme(score)
+        self._apply_theme(risk_level)
         self.score_label.setText(f"{score:.1f}")
-        self.status_badge.setText(_risk_label(score))
+        self.status_badge.setText(risk_level)
         self.progress.setValue(int(round(score)))
 
         if recurrence_years is None:
@@ -645,11 +642,11 @@ class RiskIndicatorWidget(SurfaceCard):
         )
         self.info_probability.value_label.setText(f"%{probability * 100:.1f}")
         self.info_recurrence.value_label.setText(recurrence_text)
+        self.info_region.title_label.setText(focus_label)
         self.info_region.value_label.setText(f"{region} · {event_count} kayit")
 
-    def _apply_theme(self, score: float):
-        main_color, soft_color, dark_color = _risk_palette(score)
-        tone = "success" if score <= 33 else "warning" if score <= 66 else "danger"
+    def _apply_theme(self, risk_level: str):
+        main_color, soft_color, text_color, tone = _get_risk_theme(risk_level)
 
         self.status_badge.setProperty("chipTone", tone)
         self.status_badge.style().unpolish(self.status_badge)
@@ -660,7 +657,7 @@ class RiskIndicatorWidget(SurfaceCard):
             QLabel {{
                 border-radius: 23px;
                 background: {soft_color};
-                color: {dark_color};
+                color: {text_color};
                 font-size: 22px;
                 font-weight: 800;
                 border: 1px solid {soft_color};

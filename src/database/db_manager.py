@@ -10,14 +10,14 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data_processing.data_cleaner import DataCleaner
 
 
-REGION_CITIES = {
-    "Marmara": ["İstanbul", "Edirne", "Kırklareli", "Tekirdağ", "Çanakkale", "Kocaeli", "Yalova", "Sakarya", "Bilecik", "Bursa", "Balıkesir"],
-    "Ege": ["İzmir", "Manisa", "Aydın", "Denizli", "Muğla", "Afyonkarahisar", "Kütahya", "Uşak"],
-    "Akdeniz": ["Antalya", "Isparta", "Burdur", "Adana", "Mersin", "Osmaniye", "Hatay", "Kahramanmaraş"],
-    "İç Anadolu": ["Ankara", "Konya", "Kayseri", "Eskişehir", "Sivas", "Kırıkkale", "Aksaray", "Karaman", "Kırşehir", "Niğde", "Nevşehir", "Yozgat", "Çankırı"],
-    "Karadeniz": ["Trabzon", "Samsun", "Ordu", "Giresun", "Rize", "Artvin", "Zonguldak", "Sinop", "Bartın", "Karabük", "Kastamonu", "Çorum", "Amasya", "Tokat", "Gümüşhane", "Bayburt", "Bolu", "Düzce"],
-    "Doğu Anadolu": ["Erzurum", "Erzincan", "Kars", "Ağrı", "Ardahan", "Iğdır", "Van", "Hakkari", "Bitlis", "Muş", "Bingöl", "Tunceli", "Elazığ", "Malatya"],
-    "Güneydoğu Anadolu": ["Gaziantep", "Diyarbakır", "Şanlıurfa", "Batman", "Adıyaman", "Mardin", "Siirt", "Şırnak", "Kilis"]
+REGION_BOUNDS = {
+    "Marmara": {"min_lat": 39.0, "max_lat": 42.2, "min_lon": 25.8, "max_lon": 31.2},
+    "Ege": {"min_lat": 36.8, "max_lat": 39.5, "min_lon": 25.8, "max_lon": 30.0},
+    "Akdeniz": {"min_lat": 36.0, "max_lat": 38.5, "min_lon": 29.5, "max_lon": 37.0},
+    "İç Anadolu": {"min_lat": 37.5, "max_lat": 40.5, "min_lon": 30.5, "max_lon": 36.5},
+    "Karadeniz": {"min_lat": 40.0, "max_lat": 42.5, "min_lon": 31.0, "max_lon": 41.5},
+    "Doğu Anadolu": {"min_lat": 37.0, "max_lat": 40.5, "min_lon": 37.0, "max_lon": 44.5},
+    "Güneydoğu Anadolu": {"min_lat": 36.5, "max_lat": 38.5, "min_lon": 37.0, "max_lon": 43.0},
 }
 
 DEFAULT_USERS = (
@@ -42,6 +42,37 @@ def _get_risk_level(probability):
 def hash_password(password: str) -> str:
     """Girilen parolayi SHA-256 ile ozetler."""
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+
+def _get_selected_region_bounds(*regions):
+    """Secilen bolgeler icin tekrarsiz koordinat sinirlarini dondurur."""
+    selected_bounds = []
+    seen_regions = set()
+
+    for region in regions:
+        if region in REGION_BOUNDS and region not in seen_regions:
+            selected_bounds.append(REGION_BOUNDS[region])
+            seen_regions.add(region)
+
+    return selected_bounds
+
+
+def _build_region_bounds_filter(bounds_list):
+    """SQLite icin bolge koordinat filtrelerini ve parametrelerini hazirlar."""
+    conditions = []
+    params = []
+
+    for bounds in bounds_list:
+        conditions.append("(latitude BETWEEN ? AND ? AND longitude BETWEEN ? AND ?)")
+        params.extend([
+            bounds["min_lat"],
+            bounds["max_lat"],
+            bounds["min_lon"],
+            bounds["max_lon"],
+        ])
+
+    return conditions, params
+
 
 class DBManager:
     def __init__(self, db_path: str = "data/processed/terrapulse.db"):
@@ -125,23 +156,12 @@ class DBManager:
             query += " AND strftime('%Y', time) BETWEEN ? AND ?"
             params.extend([str(start_year), str(end_year)])
             
-        # Seçilen bölgelerdeki şehirleri tek listede topla
-        target_cities = []
-        if region1 and region1 in REGION_CITIES:
-            target_cities.extend(REGION_CITIES[region1])
-        if region2 and region2 in REGION_CITIES:
-            # Seçilen ikinci bölge birinci ile aynı değilse (veya set ile duplicate temizle)
-            if region2 != region1:
-                target_cities.extend(REGION_CITIES[region2])
-                
-        # Eğer kullanıcının seçimine yönelik şehirler bulunduysa SQL AND (.. OR ..) filtresini ekle
-        if target_cities:
-            city_conditions = ["place LIKE ?" for _ in target_cities]
-            # Tüm şehirlere özel parametreler
-            params.extend([f"%{city}%" for city in target_cities])
-            
-            # (place LIKE '%Muğla%' OR place LIKE '%İzmir%' OR ...) yapısı
-            query += " AND (" + " OR ".join(city_conditions) + ")"
+        # Secilen bolgeler icin metin yerine koordinat sinirlariyla filtrele
+        selected_bounds = _get_selected_region_bounds(region1, region2)
+        if selected_bounds:
+            region_conditions, region_params = _build_region_bounds_filter(selected_bounds)
+            query += " AND (" + " OR ".join(region_conditions) + ")"
+            params.extend(region_params)
         
         try:
             df = pd.read_sql_query(query, self.conn, params=params)
@@ -151,7 +171,7 @@ class DBManager:
             print(f"❌ Veritabanı sorgu hatası: {e}")
             return pd.DataFrame()
 
-    def calculate_poisson_risk_scores(self, min_mag=5.0, start_year=None, end_year=None, forecast_years=1):
+    def calculate_poisson_risk_scores(self, min_mag=5.0, start_year=None, end_year=None, forecast_years=1, region_filter=None):
         """
         Bölgelere göre Poisson tabanlı deprem risk skorlarını hesaplar.
 
@@ -160,6 +180,7 @@ class DBManager:
             start_year: Analiz başlangıç yılı
             end_year: Analiz bitiş yılı
             forecast_years: Tahmin ufku (yıl)
+            region_filter: Sadece secilen bolgenin riskini hesaplamak icin bolge adi
 
         Returns:
             Bölge bazlı skor listesi
@@ -178,21 +199,31 @@ class DBManager:
             min_mag=min_mag,
             max_mag=10.0,
             start_year=start_year,
-            end_year=end_year
+            end_year=end_year,
+            region1=region_filter if region_filter in REGION_BOUNDS else None,
         )
 
         scores = []
-        place_series = pd.Series(dtype=str)
-        if not df.empty and 'place' in df.columns:
-            place_series = df['place'].fillna('').astype(str)
+        latitudes = pd.Series(dtype=float)
+        longitudes = pd.Series(dtype=float)
+        if not df.empty and {"latitude", "longitude"}.issubset(df.columns):
+            latitudes = pd.to_numeric(df["latitude"], errors="coerce")
+            longitudes = pd.to_numeric(df["longitude"], errors="coerce")
 
-        for region, cities in REGION_CITIES.items():
-            if place_series.empty:
+        target_regions = REGION_BOUNDS.items()
+        if region_filter in REGION_BOUNDS:
+            target_regions = [(region_filter, REGION_BOUNDS[region_filter])]
+
+        for region, bounds in target_regions:
+            if latitudes.empty or longitudes.empty:
                 event_count = 0
             else:
-                region_mask = pd.Series(False, index=place_series.index)
-                for city in cities:
-                    region_mask = region_mask | place_series.str.contains(city, case=False, regex=False)
+                region_mask = (
+                    (latitudes >= bounds["min_lat"]) &
+                    (latitudes <= bounds["max_lat"]) &
+                    (longitudes >= bounds["min_lon"]) &
+                    (longitudes <= bounds["max_lon"])
+                )
                 event_count = int(region_mask.sum())
 
             annual_rate = event_count / analysis_years

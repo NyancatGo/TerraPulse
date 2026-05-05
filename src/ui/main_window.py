@@ -27,12 +27,18 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from database.db_manager import DBManager, ensure_database_exists
+from database.db_manager import DBManager, REGION_BOUNDS, ensure_database_exists
 from reporting.report_manager import ReportManager
 from ui.analysis_tab import AnalysisTab
 from ui.components import PageHeader, RiskIndicatorWidget, SurfaceCard, TagChip, build_app_stylesheet
 from ui.map_view import MapView
 from visualization.map_engine import create_earthquake_map
+
+
+TURKEY_SCOPE_LABEL = "Tüm Türkiye"
+RISK_ALL_REGIONS_LABEL = "Tüm Bölgeler"
+REGION_NAMES = list(REGION_BOUNDS.keys())
+RISK_MAGNITUDE_OPTIONS = [f"{value / 10:.1f}" for value in range(30, 85, 5)]
 
 
 def get_risk_color(risk_level):
@@ -423,15 +429,11 @@ class MainWindow(QMainWindow):
         controls.setSpacing(12)
 
         self.combo_region1 = QComboBox()
-        self.combo_region1.addItems(
-            ["Tüm Türkiye", "Marmara", "Ege", "Akdeniz", "İç Anadolu", "Karadeniz", "Doğu Anadolu", "Güneydoğu Anadolu"]
-        )
+        self.combo_region1.addItems([TURKEY_SCOPE_LABEL, *REGION_NAMES])
         self.combo_region1.currentIndexChanged.connect(self._apply_filter)
 
         self.combo_region2 = QComboBox()
-        self.combo_region2.addItems(
-            ["Tüm Türkiye", "Marmara", "Ege", "Akdeniz", "İç Anadolu", "Karadeniz", "Doğu Anadolu", "Güneydoğu Anadolu"]
-        )
+        self.combo_region2.addItems([TURKEY_SCOPE_LABEL, *REGION_NAMES])
         self.combo_region2.currentIndexChanged.connect(self._apply_filter)
 
         self.btn_compare = QPushButton("Karsilastir")
@@ -456,8 +458,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(
             PageHeader(
                 "Risk Skorlama",
-                "Risk paneli ve parametreler tek satirda tutulur; tabloya daha fazla alan birakilir.",
-                chips=[("Poisson modeli", "warning"), ("Bolgesel siralama", "accent")],
+                "Esik ustu Poisson riskini tum bolgeler veya tek secili bolge icin yeniden hesaplayin.",
+                chips=[("Poisson modeli", "warning"), ("Bolge filtresi", "accent")],
             )
         )
 
@@ -470,15 +472,18 @@ class MainWindow(QMainWindow):
         control_card = SurfaceCard(padding=16, spacing=10)
         control_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         control_card.content_layout.addWidget(
-            self._create_card_header("Parametreler", "Esik buyuklugunu ve tahmin ufkunu secerek risk skorlarini yeniden uretin.")
+            self._create_card_header("Parametreler", "Esik buyuklugu, bolge ve tahmin ufku degistikce risk dagilimi yenilenir.")
         )
 
         controls = QHBoxLayout()
         controls.setSpacing(12)
 
         self.combo_risk_mag = QComboBox()
-        self.combo_risk_mag.addItems(["4.0", "4.5", "5.0", "5.5", "6.0"])
+        self.combo_risk_mag.addItems(RISK_MAGNITUDE_OPTIONS)
         self.combo_risk_mag.setCurrentText("5.0")
+
+        self.combo_risk_region = QComboBox()
+        self.combo_risk_region.addItems([RISK_ALL_REGIONS_LABEL, *REGION_NAMES])
 
         self.spin_forecast_years = QSpinBox()
         self.spin_forecast_years.setRange(1, 50)
@@ -494,6 +499,7 @@ class MainWindow(QMainWindow):
         self.btn_export.clicked.connect(self._export_pdf_report)
 
         controls.addWidget(self._create_labeled_control("Min Buyukluk (Mw)", self.combo_risk_mag), 1)
+        controls.addWidget(self._create_labeled_control("Bolge Filtresi", self.combo_risk_region), 1)
         controls.addWidget(self._create_labeled_control("Tahmin Ufku (Yil)", self.spin_forecast_years), 1)
         controls.addWidget(self.btn_calculate, 0, Qt.AlignmentFlag.AlignBottom)
         controls.addWidget(self.btn_export, 0, Qt.AlignmentFlag.AlignBottom)
@@ -516,7 +522,7 @@ class MainWindow(QMainWindow):
         table_header_layout.setContentsMargins(18, 14, 18, 10)
         table_header_layout.setSpacing(12)
         table_header_layout.addWidget(
-            self._create_card_header("Risk Tablosu", "Her bolge icin yillik oran, olasilik ve tekrarlanma suresi birlikte sunulur."),
+            self._create_card_header("Risk Tablosu", "Secilen filtreye gore yillik oran, olasilik ve tekrarlanma suresi birlikte sunulur."),
             1,
         )
         table_header_layout.addWidget(TagChip("Canli siralama", "neutral"), 0, Qt.AlignmentFlag.AlignTop)
@@ -537,6 +543,10 @@ class MainWindow(QMainWindow):
         table_card.content_layout.addWidget(table_header)
         table_card.content_layout.addWidget(self.risk_table, stretch=1)
         layout.addWidget(table_card, stretch=1)
+
+        self.combo_risk_mag.currentIndexChanged.connect(self._calculate_risk_scores)
+        self.combo_risk_region.currentIndexChanged.connect(self._calculate_risk_scores)
+        self.spin_forecast_years.valueChanged.connect(self._calculate_risk_scores)
 
     def _create_card_header(self, title: str, subtitle: str):
         widget = QWidget()
@@ -602,38 +612,36 @@ class MainWindow(QMainWindow):
         start_year = self.slider_start_year.value()
         end_year = self.slider_end_year.value()
 
-        region1 = getattr(self, "combo_region1", None)
-        region2 = getattr(self, "combo_region2", None)
-
-        region1_text = region1.currentText() if region1 else "Tüm Türkiye"
-        region2_text = region2.currentText() if region2 else "Tüm Türkiye"
+        region1_text = self.combo_region1.currentText() if hasattr(self, "combo_region1") else TURKEY_SCOPE_LABEL
+        region2_text = self.combo_region2.currentText() if hasattr(self, "combo_region2") else TURKEY_SCOPE_LABEL
 
         print(f"\n[DEBUG] Seçilen Bölge 1: {region1_text}, Bölge 2: {region2_text}")
         print(f"[DEBUG] 🔍 Diğer Filtreler: Mag>={min_mag:.1f}, Yıl: {start_year}-{end_year}")
 
-        filtered_df = self.db.fetch_earthquakes(
-            min_mag=min_mag,
-            max_mag=10.0,
-            start_year=start_year,
-            end_year=end_year,
-            region1=region1_text,
-            region2=region2_text,
-        )
+        fetch_kwargs = dict(min_mag=min_mag, max_mag=10.0, start_year=start_year, end_year=end_year)
+        df1 = self.db.fetch_earthquakes(region1=region1_text, **fetch_kwargs)
+        df2 = self.db.fetch_earthquakes(region1=region2_text, **fetch_kwargs)
 
-        print(f"[DEBUG] 📊 filtrelenmiş DF uzunluğu: {len(filtered_df)}")
-        if not filtered_df.empty:
-            print(f"[DEBUG] 📊 Gelen sütunlar: {filtered_df.columns.tolist()}")
+        # Harita için iki bölgenin birleşimi (tekrarlar temizlenir)
+        if not df1.empty and not df2.empty:
+            map_df = pd.concat([df1, df2]).drop_duplicates()
+        elif not df1.empty:
+            map_df = df1
+        else:
+            map_df = df2
 
-        self.current_filtered_df = filtered_df.copy()
-        self._set_quake_count(len(filtered_df))
-        self.analysis_widget.update_charts(filtered_df)
+        print(f"[DEBUG] 📊 df1={len(df1)}, df2={len(df2)}, harita={len(map_df)}")
 
-        self._update_map(filtered_df)
-        if filtered_df.empty:
+        self.current_filtered_df = map_df.copy()
+        self._set_quake_count(len(map_df))
+        self.analysis_widget.update_charts(df1, df2, region1_text, region2_text)
+
+        self._update_map(map_df)
+        if map_df.empty:
             print("⚠️ Filtre sonucu veri bulunamadı")
             self._set_quake_count(0)
 
-        self._validate_data(filtered_df)
+        self._validate_data(map_df)
 
     def _validate_data(self, df):
         print("\n" + "=" * 50)
@@ -656,17 +664,20 @@ class MainWindow(QMainWindow):
 
         print("=" * 50 + "\n")
 
-    def _calculate_risk_scores(self):
+    def _calculate_risk_scores(self, *_):
         min_mag = float(self.combo_risk_mag.currentText())
         forecast_years = int(self.spin_forecast_years.value())
         start_year = self.slider_start_year.value()
         end_year = self.slider_end_year.value()
+        selected_region = self.combo_risk_region.currentText() if hasattr(self, "combo_risk_region") else RISK_ALL_REGIONS_LABEL
+        region_filter = None if selected_region == RISK_ALL_REGIONS_LABEL else selected_region
 
         scores = self.db.calculate_poisson_risk_scores(
             min_mag=min_mag,
             start_year=start_year,
             end_year=end_year,
             forecast_years=forecast_years,
+            region_filter=region_filter,
         )
         self.latest_risk_scores = scores
 
@@ -696,12 +707,16 @@ class MainWindow(QMainWindow):
 
         if scores:
             highest = scores[0]
+            highest["focus_label"] = "Secili Bolge" if region_filter else "En Riskli Bolge"
             self.risk_indicator.set_risk_data(highest)
+            risk_label = "Secili Bolge Riski" if region_filter else "En Yuksek Risk"
+            scope_label = region_filter or "Tum bolgeler"
             summary = (
                 f"Analiz Donemi: {start_year}-{end_year} | "
                 f"Esik: Mw≥{min_mag:.1f} | "
+                f"Bolge: {scope_label} | "
                 f"Tahmin Ufku: {forecast_years} yil | "
-                f"En Yuksek Risk: {highest['region']} (%{highest['risk_score']:.1f})"
+                f"{risk_label}: {highest['region']} (%{highest['risk_score']:.1f})"
             )
         else:
             self.risk_indicator.set_no_data_state()
@@ -762,7 +777,7 @@ class MainWindow(QMainWindow):
 
         self.current_filtered_df = filtered_df.copy()
         self._set_quake_count(len(filtered_df))
-        self.analysis_widget.update_charts(filtered_df)
+        self.analysis_widget.update_charts(filtered_df, filtered_df, TURKEY_SCOPE_LABEL, TURKEY_SCOPE_LABEL)
 
         if not filtered_df.empty:
             self._update_map(filtered_df)
@@ -821,11 +836,11 @@ class MainWindow(QMainWindow):
         selected_regions = []
         if hasattr(self, "combo_region1"):
             region1 = self.combo_region1.currentText()
-            if region1 and region1 != "Tüm Türkiye":
+            if region1 and region1 != TURKEY_SCOPE_LABEL:
                 selected_regions.append(region1)
         if hasattr(self, "combo_region2"):
             region2 = self.combo_region2.currentText()
-            if region2 and region2 != "Tüm Türkiye" and region2 not in selected_regions:
+            if region2 and region2 != TURKEY_SCOPE_LABEL and region2 not in selected_regions:
                 selected_regions.append(region2)
 
         selected_region_label = " / ".join(selected_regions) if selected_regions else "Tum Turkiye"
