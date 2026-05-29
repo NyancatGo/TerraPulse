@@ -10,6 +10,12 @@
   [![License](https://img.shields.io/badge/License-MIT-purple.svg)](LICENSE)
 </div>
 
+> [!IMPORTANT]
+> **🔐 Sisteme Giriş Bilgileri (Varsayılan)**
+> Uygulamaya giriş yapabilmek için aşağıdaki yetkilendirilmiş hesapları kullanabilirsiniz:
+> - **Yönetici (Admin):** Kullanıcı Adı: `admin` &nbsp;&nbsp;|&nbsp;&nbsp; Şifre: `admin123`
+> - **Analist (User):** Kullanıcı Adı: `analist` &nbsp;&nbsp;|&nbsp;&nbsp; Şifre: `user123`
+
 ---
 
 ## 📑 İçindekiler
@@ -34,7 +40,7 @@ Amacımız, tarihsel verileri kullanarak **"Hangi bölge ne kadar risk altında?
 
 ## ✨ Temel Özellikler
 
-* **🔐 Güvenli Erişim Sistemi:** Yetkilendirilmiş kullanıcı girişi (Varsayılan kullanıcı: `admin` / Şifre: `admin`).
+* **🔐 Güvenli Erişim Sistemi:** Yetkilendirilmiş kullanıcı girişi (Farklı sistem yetkilerine sahip Admin ve Analist rolleri).
 * **🗺️ İnteraktif Folium Haritaları:** PyQtWebEngine içerisine gömülü, dinamik olarak güncellenen fay hattı gösterimleri, deprem kümelenmeleri ve yoğunluk (Heatmap) haritaları.
 * **⚡ Çevrimdışı Performans:** Verilerin yerel **SQLite** veritabanında saklanması sayesinde internet bağlantısı olmadan ultra hızlı filtreleme ve sorgulama.
 * **📈 İstatistiksel Analiz Modülleri:** Tarihsel deprem frekans analizleri, derinlik-büyüklük ilişkileri ve trend grafikleri (Matplotlib entegrasyonu).
