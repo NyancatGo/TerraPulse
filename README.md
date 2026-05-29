@@ -25,7 +25,8 @@
 - [📊 Matematiksel Modelleme](#-matematiksel-modelleme)
 - [📂 Proje Yapısı](#-proje-yapısı)
 - [🚀 Kurulum ve Çalıştırma](#-kurulum-ve-çalıştırma)
-- [📦 Kendi Exe Dosyanızı Oluşturma](#-kendi-exe-dosyanızı-oluşturma)
+- [📦 Kendi Exe Dosyanızı Oluşturma (Build Rehberi)](#-kendi-exe-dosyanızı-oluşturma-build-rehberi)
+- [💻 Geliştirici Rehberi (Projeyi Nasıl Geliştirebilirsiniz?)](#-geliştirici-rehberi-projeyi-nasıl-geliştirebilirsiniz)
 - [👥 Hedef Kitle](#-hedef-kitle)
 
 ---
@@ -139,14 +140,48 @@ Yazılımı kullanmak için bilgisayarınızda Python kurulu olmasına gerek yok
 
 ---
 
-## 📦 Kendi Exe Dosyanızı Oluşturma
+## 📦 Kendi Exe Dosyanızı Oluşturma (Build Rehberi)
 
-Kaynak kodda değişiklik yaptıktan sonra uygulamayı yeniden paketlemek isterseniz, proje kök dizininde bulunan özel derleme betiğini kullanabilirsiniz:
+Kaynak kodda (örneğin yeni bir analiz sekmesi veya veri filtresi) değişiklik yaptıktan sonra uygulamayı son kullanıcılar için yeniden paketlemek isterseniz, proje kök dizininde bulunan **özel derleme betiğini** kullanmalısınız.
 
-```bash
-python build_exe.py
-```
-Bu betik arka planda `terrapulse.spec` dosyasını okuyarak, PyQtWebEngine, Folium şablonları, fpdf ve diğer tüm kütüphaneleri eksiksiz bir şekilde derler. İşlem bittiğinde yeni exe dosyanız (yaklaşık 24 MB) `dist/TerraPulse/` dizininde hazır olacaktır.
+### Adım Adım Build İşlemi:
+
+1. **Önkoşullar:** Geliştirme ortamınızda `pyinstaller` modülünün kurulu olduğundan emin olun (`pip install pyinstaller`).
+2. **Derlemeyi Başlatma:** Proje ana dizininde (TerraPulse klasörü) terminali açın ve aşağıdaki komutu çalıştırın:
+   ```bash
+   python build_exe.py
+   ```
+3. **Arka Planda Neler Oluyor?**
+   - Betik, önce eski `build/` ve `dist/` klasörlerini otomatik temizler.
+   - `terrapulse.spec` dosyasını okuyarak uygulamanın derinlemesine analizini yapar.
+   - *PyQtWebEngine* (Chromium tarayıcı motoru), *Folium* harita şablonları (`branca` dahil) ve *fpdf* (PDF kütüphanesi) gibi karmaşık bileşenlerin tüm gizli bağımlılıklarını (hidden imports) güvenle toplar.
+   - Uygulama içi yolları ayarlayan `paths.py` sistemi sayesinde, veritabanı ve asset klasörleri exe ortamına (frozen environment) uygun şekilde paketlenir.
+4. **Sonuç:** İşlem bittiğinde (bilgisayar hızına göre yaklaşık 2-5 dakika sürebilir), `dist/TerraPulse/` dizininde **kullanıma hazır `TerraPulse.exe`** dosyanız oluşacaktır.
+5. **Dağıtım (Deployment):** Uygulamayı başka bir bilgisayara taşımak isterseniz sadece `.exe` dosyasını değil, `dist/TerraPulse/` klasörünü **tamamen bir zip dosyası haline getirip** paylaşmalısınız (çünkü yanındaki `_internal` klasörü kritik sistem dosyalarını barındırır).
+
+---
+
+## 💻 Geliştirici Rehberi (Projeyi Nasıl Geliştirebilirsiniz?)
+
+TerraPulse, ekip çalışmasına uygun, modüler ve genişletilebilir bir MVC-benzeri mimariyle tasarlanmıştır. Projeye yeni özellikler eklemek veya katkıda bulunmak isteyen geliştiriciler için temel kurallar:
+
+### 1. Yeni Bir Arayüz (UI) Sekmesi Eklemek
+Kullanıcı arayüzüne ait tüm sınıflar `src/ui/` dizinindedir. Ana pencere `main_window.py` üzerinden sekmeli (`QTabWidget`) bir yapı sunar.
+- Yeni bir görselleştirme paneli eklemek için `src/ui/` altında yeni bir Python dosyası/sınıfı oluşturun (Örn: `fault_lines_tab.py`).
+- Oluşturduğunuz sınıfı `main_window.py` içindeki `init_ui()` metodunda tab listesine import edip dahil edin.
+
+### 2. Veritabanı İşlemleri (SQLite3)
+Projeye ait tüm veri iletişimi **sadece** `src/database/db_manager.py` üzerinden yürütülür.
+- Ham verileri çekmek veya yeni sorgular yazmak için `db_manager.py` içine yepyeni fonksiyonlar (Örn: `get_earthquakes_by_region()`) ekleyin.
+- Arayüz (`ui`) sınıflarının içinden doğrudan SQL sorgusu (`SELECT * FROM...`) **yazmayın**. Veritabanı sorgularını her zaman Manager sınıfına yaptırın; bu kodun spagetti olmasını engeller.
+
+### 3. Dinamik Harita ve Grafik Üretimi
+- Haritalama algoritmaları ve folium kodları `src/visualization/map_engine.py` modülü içerisindedir. Yeni bir görselleştirme katmanı (Örn: `MarkerCluster`) eklemek isterseniz bu dosyaya yeni bir fonksiyon tanımlayın.
+- Dosya yolları (şablonlar, geojson'lar, html'ler) okuyacaksanız **MUTLAKA** `src/utils/paths.py` içindeki `get_resource_path()` metodunu kullanın. Bunu yapmazsanız kodunuz IDE üzerinde çalışır ancak uygulamayı `.exe` yaptığınızda uygulama anında çöker!
+
+### 4. Kod Düzeni ve Standartlar
+- Projede okunabilirliği artırmak için Fonksiyon İmzaları (Type Hinting) kullanımı tavsiye edilir (Örn: `def calculate_risk(magnitude: float) -> dict:`).
+- Büyük veri setleri üzerinde (örneğin 100 bin deprem kaydı) analiz yaparken standart Python `for/while` döngüleri yerine, performans için daima **Pandas vektörizasyon** tekniklerini kullanın.
 
 ---
 
