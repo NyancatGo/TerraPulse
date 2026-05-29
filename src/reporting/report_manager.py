@@ -6,10 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import os
 
-try:
-    from fpdf import FPDF
-except ImportError:  # pragma: no cover - kurulum eksikse kullaniciya yukarida anlatilir
-    FPDF = None
+from fpdf import FPDF
 
 
 def _find_font_paths() -> tuple[str | None, str | None]:

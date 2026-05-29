@@ -203,9 +203,8 @@ class MainWindow(QMainWindow):
         self.min_year, self.max_year = self.db.get_date_range()
         print(f"📅 Tarih aralığı: {self.min_year} - {self.max_year}")
 
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        maps_dir = os.path.join(project_root, "maps")
-        os.makedirs(maps_dir, exist_ok=True)
+        from utils.paths import get_maps_dir
+        maps_dir = get_maps_dir()
         self.map_path = os.path.join(maps_dir, "earthquake_map.html")
         self.map_runtime_dir = os.path.join(maps_dir, "runtime")
         os.makedirs(self.map_runtime_dir, exist_ok=True)

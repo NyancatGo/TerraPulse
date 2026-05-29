@@ -25,7 +25,8 @@ class LoginDialog(QDialog):
         self._login_in_progress = False
         self._password_visible = False
 
-        icons_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icons")
+        from utils.paths import get_resource_path
+        icons_dir = get_resource_path(os.path.join("src", "ui", "icons"))
         self.eye_icon = QIcon(os.path.join(icons_dir, "eye.svg"))
         self.eye_off_icon = QIcon(os.path.join(icons_dir, "eye_off.svg"))
 

@@ -5,9 +5,8 @@ import sys
 import math
 import hashlib
 
-# DataCleaner'ı bulabilmesi için import yollarını düzeltiyoruz
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data_processing.data_cleaner import DataCleaner
+from utils.paths import get_resource_path, get_db_path, get_data_dir
 
 
 REGION_BOUNDS = {
@@ -75,10 +74,9 @@ def _build_region_bounds_filter(bounds_list):
 
 
 class DBManager:
-    def __init__(self, db_path: str = "data/processed/terrapulse.db"):
-        # Projenin kök dizininden referans almak için mutlak yola çevir
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        self.db_path = os.path.join(base_dir, db_path)
+    def __init__(self, db_path: str = None):
+        # Merkezi yol yonetimi uzerinden yazilabilir DB konumunu al
+        self.db_path = db_path or get_db_path()
         
         self._create_db_dir()
         self.conn = self._connect()
@@ -338,9 +336,8 @@ class DBManager:
 
 def build_database():
     """Tüm süreci başlatan yardımcı fonksiyon."""
-    # DataCleaner'ın düzgün adres okuması için yolu düzelt
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    cleaner = DataCleaner(os.path.join(base_dir, "data/raw/earthquakes.csv"))
+    csv_path = get_resource_path(os.path.join("data", "raw", "earthquakes.csv"))
+    cleaner = DataCleaner(csv_path)
     
     df = cleaner.process_data()
     db = DBManager()
@@ -351,8 +348,7 @@ def build_database():
 
 def ensure_database_exists():
     """Veritabanı yoksa oluşturur, varsa kontrol eder"""
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    db_path = os.path.join(base_dir, "data/processed/terrapulse.db")
+    db_path = get_db_path()  # paths.py varsayilan DB'yi otomatik kopyalar
     
     # Veritabanı yoksa oluştur
     if not os.path.exists(db_path):
@@ -370,7 +366,6 @@ def ensure_database_exists():
         
         if count == 0:
             print("📦 Veritabanı boş, veri yükleniyor...")
-            # Veritabanını sil ve yeniden oluştur
             os.remove(db_path)
             build_database()
             return True

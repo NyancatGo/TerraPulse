@@ -404,8 +404,8 @@ def add_fault_lines(map_obj, geojson_path=None):
     Turkiye fay hatlarini haritaya ekler.
     """
     if geojson_path is None:
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        geojson_path = os.path.join(base_dir, "data", "geo", "turkey_fault_lines.geojson")
+        from utils.paths import get_resource_path
+        geojson_path = get_resource_path(os.path.join("data", "geo", "turkey_fault_lines.geojson"))
 
     if not os.path.exists(geojson_path):
         print(f"⚠️ Fay hatlari dosyasi bulunamadi: {geojson_path}")
